@@ -1,0 +1,2 @@
+# À remplir plus tard quand on fera Flask
+# Pour l'instant, juste pour faire fonctionner CI

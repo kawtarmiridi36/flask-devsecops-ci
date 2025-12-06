@@ -1,0 +1,6 @@
+# Les owners par défaut
+* @VOTRE_USERNAME @USERNAME_COLLEGUE
+
+# Protection spécifique
+/.github/workflows/ @VOTRE_USERNAME
+/docker/ @VOTRE_USERNAME
