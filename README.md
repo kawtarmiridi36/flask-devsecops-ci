@@ -9,5 +9,5 @@ Ce projet implémente une chaîne DevSecOps complète.
 - Build et déploiement
 
 ## Équipe
-- [Votre nom]
-- [Nom collègue]
+- MIRIDI Kawtar
+- ZAKI Yasmina
