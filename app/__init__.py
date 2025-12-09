@@ -1,1 +1,2 @@
-# Flask app placeholder
+"""Simple app."""
+__version__ = "1.0.0"
