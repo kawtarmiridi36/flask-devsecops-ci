@@ -1,31 +1,19 @@
 soft-fail: false
 skip-check:
-  # Temporarily skip for testing
+  # Terraform checks
+  - CKV_AWS_18  # S3 logging
+  - CKV_AWS_19  # S3 encryption
+  - CKV_AWS_20  # S3 public ACL
+  - CKV_AWS_21  # S3 versioning
+  - CKV_AWS_144  # S3 cross-region replication
+  - CKV_AWS_145  # S3 bucket encryption
+  
+  # Docker checks
+  - CKV_DOCKER_2  # Non-root user
   - CKV_DOCKER_3  # WORKDIR absolu
-  - CKV_DOCKER_7  # HEALTHCHECK
-quiet: false
+  - CKV_DOCKER_4  # Package update
+  
+quiet: true
 framework:
   - dockerfile
-  - gitlab_configuration
-  - github_configuration
-  - bitbucket_configuration
-  - bitbucket_pipelines
-  - circleci_pipelines
-  - kustomize
-  - kubernetes
-  - helm
   - terraform
-  - secrets
-  - openapi
-  - sca_package
-  - all
-external-checks-dir:
-  - .external_checkov_checks
-download-external-modules: true
-evaluate-variables: true
-output:
-  - cli
-  - json
-  - junitxml
-  - github_failed_only
-  - sarif

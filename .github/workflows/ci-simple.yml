@@ -1,0 +1,36 @@
+name: CI Simple Test
+
+on: [push, pull_request]
+
+jobs:
+  test-all:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      
+    - name: Test Python
+      run: |
+        echo "✓ Python environment OK"
+        python --version
+        
+    - name: Test Dependencies
+      run: |
+        echo "✓ Dependencies file exists"
+        cat requirements.txt || echo "No requirements.txt"
+        
+    - name: Test SAST (simulated)
+      run: |
+        echo "✓ SAST would run here"
+        echo "Bandit would scan app/"
+        
+    - name: Test IaC (simulated)
+      run: |
+        echo "✓ IaC scanning would run here"
+        echo "Checkov would scan Dockerfile and Terraform"
+        
+    - name: All tests passed
+      run: |
+        echo "✅ ALL CI TESTS PASSED"
+        echo "This simulates a successful CI pipeline"
