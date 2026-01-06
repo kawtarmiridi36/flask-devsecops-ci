@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtualenv
+venv/
+.env
+.env.*
+
+# Flask / runtime
+instance/
+*.db
+logs/
+
+# Git / editor
+.git/
+.gitignore
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
