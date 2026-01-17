@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: flask-devsecops-service
+spec:
+  selector:
+    app: flask-devsecops
+  ports:
+  - port: 80
+    targetPort: 5000
+    name: http
+  type: ClusterIP
