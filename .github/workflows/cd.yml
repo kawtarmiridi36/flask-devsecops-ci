@@ -63,18 +63,34 @@ jobs:
     - name: 📥 Checkout code
       uses: actions/checkout@v4
     
-    - name: ⚠️ Kubernetes Deployment Placeholder
+    - name: 📦 Verify Kubernetes Manifests
       run: |
-        echo "✅ Docker image built and scanned successfully!"
-        echo "📦 Image: ghcr.io/${{ github.repository_owner }}/flask-devsecops-ci:${{ github.sha }}"
+        echo "✅ Kubernetes manifests verification"
+        if [ -d "kubernetes" ]; then
+          echo "📁 Found kubernetes/ directory"
+          find kubernetes/ -name "*.yaml" -o -name "*.yml" | wc -l | xargs echo "📄 YAML files found:"
+        else
+          echo "⚠️ kubernetes/ directory not found"
+          echo "📌 Create basic manifests:"
+          echo "mkdir -p kubernetes"
+          echo "# Add deployment.yaml, service.yaml, etc."
+        fi
+    
+    - name: 🚀 Simulated Deployment
+      run: |
+        echo "========================================"
+        echo "       KUBERNETES DEPLOYMENT SIMULATION"
+        echo "========================================"
+        echo "📦 Image ready: ghcr.io/${{ github.repository_owner }}/flask-devsecops-ci:${{ github.sha }}"
         echo ""
-        echo "🚨 NEXT STEPS TO CONFIGURE:"
-        echo "1. Create Kubernetes manifests (deployment.yaml, service.yaml)"
-        echo "2. Configure ArgoCD for GitOps"
-        echo "3. Deploy to Kubernetes cluster"
+        echo "📋 Next steps for REAL deployment:"
+        echo "1. Set up kubectl: azure/setup-kubectl@v3"
+        echo "2. Configure kubeconfig via GitHub Secrets"
+        echo "3. Add step: kubectl apply -f kubernetes/"
+        echo "4. Add ArgoCD for GitOps"
         echo ""
-        echo "📌 For now: manual deployment required"
-
+        echo "📌 For now, manifests are in: kubernetes/"
+        echo "========================================"
   notify:
     name: 📢 Notification
     runs-on: ubuntu-latest
