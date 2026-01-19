@@ -1,0 +1,131 @@
+{% extends "dev/base.html" %}
+{% block content %}
+<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+    <h1 class="h2">📊 Dashboard Développeur</h1>
+    <button class="btn btn-sm btn-success" onclick="createTestData()">
+        🧪 Créer données test
+    </button>
+</div>
+
+<!-- Cartes de statistiques cliquables -->
+<div class="row mb-4">
+    <div class="col-md-3 mb-3">
+        <a href="/dev/api/users" target="_blank" class="text-decoration-none">
+            <div class="card text-white bg-primary hover-shadow">
+                <div class="card-body text-center">
+                    <h5>👥 Utilisateurs</h5>
+                    <h2>{{ stats.total_users }}</h2>
+                    <small>Cliquer pour voir la liste</small>
+                </div>
+            </div>
+        </a>
+    </div>
+    <div class="col-md-3 mb-3">
+        <a href="/dev/api/annonces" target="_blank" class="text-decoration-none">
+            <div class="card text-white bg-success hover-shadow">
+                <div class="card-body text-center">
+                    <h5>📢 Annonces</h5>
+                    <h2>{{ stats.total_annonces }}</h2>
+                    <small>Cliquer pour voir les annonces</small>
+                </div>
+            </div>
+        </a>
+    </div>
+    <div class="col-md-3 mb-3">
+        <a href="/dev/api/annonces" target="_blank" class="text-decoration-none">
+            <div class="card text-white bg-info hover-shadow">
+                <div class="card-body text-center">
+                    <h5>💬 Commentaires</h5>
+                    <h2>{{ stats.total_commentaires }}</h2>
+                    <small>Cliquer pour voir les commentaires</small>
+                </div>
+            </div>
+        </a>
+    </div>
+    <div class="col-md-3 mb-3">
+        <a href="/dev/api/db-info" target="_blank" class="text-decoration-none">
+            <div class="card text-white bg-warning hover-shadow">
+                <div class="card-body text-center">
+                    <h5>🛠️ DB Status</h5>
+                    <h2>{% if stats.total_users >= 0 %}✅{% else %}❌{% endif %}</h2>
+                    <small>Cliquer pour info DB</small>
+                </div>
+            </div>
+        </a>
+    </div>
+</div>
+
+<!-- Données récentes -->
+<div class="row">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h6>👥 Derniers utilisateurs</h6>
+            </div>
+            <div class="card-body">
+                {% if recent_users %}
+                    {% for user in recent_users %}
+                    <div class="border-bottom pb-2 mb-2">
+                        <strong>{{ user.username }}</strong><br>
+                        <small class="text-muted">{{ user.email }} • {{ user.role }}</small>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <p class="text-muted">Aucun utilisateur</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h6>📢 Dernières annonces</h6>
+            </div>
+            <div class="card-body">
+                {% if recent_annonces %}
+                    {% for annonce in recent_annonces %}
+                    <div class="border-bottom pb-2 mb-2">
+                        <strong>{{ annonce.titre }}</strong><br>
+                        <small class="text-muted">{{ annonce.contenu[:50] }}...</small>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <p class="text-muted">Aucune annonce</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Actions rapides -->
+<div class="alert alert-info mt-4">
+    <h6>🔧 Actions rapides</h6>
+    <div class="btn-group">
+        <a href="/dev/api/stats" class="btn btn-outline-primary btn-sm" target="_blank">📈 Stats API</a>
+        <a href="/dev/api/health" class="btn btn-outline-success btn-sm" target="_blank">❤️ Santé App</a>
+        <a href="/dev/api/db-info" class="btn btn-outline-warning btn-sm" target="_blank">🗃️ Info DB</a>
+    </div>
+</div>
+
+<script>
+function createTestData() {
+    fetch('/dev/api/create-test-data', { method: 'POST' })
+        .then(response => response.json())
+        .then(data => {
+            alert('✅ ' + data.message);
+            location.reload();
+        })
+        .catch(error => {
+            alert('❌ Erreur: ' + error);
+        });
+}
+</script>
+
+<style>
+.hover-shadow:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+    transition: all 0.3s ease;
+}
+</style>
+{% endblock %}
