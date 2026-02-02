@@ -31,14 +31,15 @@ jobs:
 
       - name: Linting avec Flake8
         run: |
-    # Vérifier d'abord si app/ existe avec du code
-         if [ -d "app" ] && [ "$(find app -name '*.py' | wc -l)" -gt 0 ]; then
+          # Vérifier d'abord si app/ existe avec du code
+          if [ -d "app" ] && [ "$(find app -name '*.py' | wc -l)" -gt 0 ]; then
             flake8 app/ --count --select=E9,F63,F7,F82 --show-source --statistics || true
             flake8 app/ --count --exit-zero --max-complexity=10 --statistics
-         else
+          else
             echo "⚠️ Aucun code Python trouvé dans app/ - linting ignoré"
-          fi      
-       - name: Tests unitaires
+          fi
+      
+      - name: Tests unitaires
         run: |
           python -m pytest tests/ -v || echo "Aucun test trouvé - à implémenter"
 
