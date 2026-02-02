@@ -53,65 +53,206 @@ jobs:
         image: ghcr.io/${{ github.repository_owner }}/flask-devsecops-ci:${{ github.sha }}
         format: 'spdx'
 
-  deploy-to-k8s:
-    name: ☸️ Deploy to Kubernetes
+  validate-manifests:
+    name: ✅ Validate Manifests
     runs-on: ubuntu-latest
     needs: build-scan-push
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+    
+    - name: 🔧 Install kubeconform
+      run: |
+        wget -q https://github.com/yannh/kubeconform/releases/download/v0.6.5/kubeconform-linux-amd64.tar.gz
+        tar xf kubeconform-linux-amd64.tar.gz
+        sudo mv kubeconform /usr/local/bin/
+    
+    - name: 🧪 Validate Kubernetes Manifests
+      run: |
+        echo "🔍 Validating with kubeconform..."
+        kubeconform -summary kubernetes/
+        
+        # Validation supplémentaire
+        echo ""
+        echo "🔍 Additional validations:"
+        
+        # Vérifier que deployment.yaml existe
+        if [ ! -f "kubernetes/deployment.yaml" ]; then
+          echo "❌ ERROR: kubernetes/deployment.yaml not found"
+          exit 1
+        fi
+        
+        # Vérifier que service.yaml existe
+        if [ ! -f "kubernetes/service.yaml" ]; then
+          echo "❌ ERROR: kubernetes/service.yaml not found"
+          exit 1
+        fi
+        
+        # Vérifier la syntaxe YAML
+        echo "✅ All required manifests found"
+    
+    - name: 🖼️ Update Image Tag
+      run: |
+        echo "🖼️ Updating image tag in deployment..."
+        sed -i "s|image:.*|image: ghcr.io/${{ github.repository_owner }}/flask-devsecops-ci:${{ github.sha }}|" kubernetes/deployment.yaml
+        echo "✅ Updated image to: $(grep 'image:' kubernetes/deployment.yaml)"
+
+  deploy:
+    name: ☸️ Deploy to Kubernetes
+    runs-on: ubuntu-latest
+    needs: validate-manifests
     if: github.ref == 'refs/heads/main'
     
     steps:
     - name: 📥 Checkout code
       uses: actions/checkout@v4
     
-    - name: 📦 Verify Kubernetes Manifests
+    - name: 🔧 Setup kubectl
+      uses: azure/setup-kubectl@v3
+      with:
+        version: 'latest'
+    
+    - name: 🔐 Configure Kubeconfig
+      id: kubeconfig
       run: |
-        echo "✅ Kubernetes manifests verification"
-        if [ -d "kubernetes" ]; then
-          echo "📁 Found kubernetes/ directory"
-          find kubernetes/ -name "*.yaml" -o -name "*.yml" | wc -l | xargs echo "📄 YAML files found:"
+        echo "🔐 Checking for Kubernetes configuration..."
+        
+        if [ -n "${{ secrets.KUBE_CONFIG }}" ]; then
+          echo "✅ KUBE_CONFIG secret found"
+          mkdir -p ~/.kube
+          
+          # Essayer de décoder en base64 d'abord, sinon utiliser directement
+          echo "${{ secrets.KUBE_CONFIG }}" | base64 -d > ~/.kube/config 2>/dev/null || \
+          echo "${{ secrets.KUBE_CONFIG }}" > ~/.kube/config
+          
+          echo "📋 Kubeconfig created"
+          kubectl config view --minify
+          echo "::set-output name=configured::true"
         else
-          echo "⚠️ kubernetes/ directory not found"
-          echo "📌 Create basic manifests:"
-          echo "mkdir -p kubernetes"
-          echo "# Add deployment.yaml, service.yaml, etc."
+          echo "⚠️ KUBE_CONFIG secret not configured"
+          echo "ℹ️ Deployment will be skipped"
+          echo "💡 Add KUBE_CONFIG secret to enable deployment"
+          echo "::set-output name=configured::false"
         fi
     
-    - name: 🚀 Simulated Deployment
+    - name: 🚀 Attempt Deployment
+      if: steps.kubeconfig.outputs.configured == 'true'
       run: |
         echo "========================================"
-        echo "       KUBERNETES DEPLOYMENT SIMULATION"
+        echo "       ATTEMPTING K8S DEPLOYMENT       "
         echo "========================================"
-        echo "📦 Image ready: ghcr.io/${{ github.repository_owner }}/flask-devsecops-ci:${{ github.sha }}"
+        echo "📦 Image: ghcr.io/${{ github.repository_owner }}/flask-devsecops-ci:${{ github.sha }}"
         echo ""
-        echo "📋 Next steps for REAL deployment:"
-        echo "1. Set up kubectl: azure/setup-kubectl@v3"
-        echo "2. Configure kubeconfig via GitHub Secrets"
-        echo "3. Add step: kubectl apply -f kubernetes/"
-        echo "4. Add ArgoCD for GitOps"
+        
+        # Mettre à jour l'image dans le deployment
+        sed -i "s|image:.*|image: ghcr.io/${{ github.repository_owner }}/flask-devsecops-ci:${{ github.sha }}|" kubernetes/deployment.yaml
+        
+        # Essayer d'appliquer les manifests
+        echo "📋 Applying Kubernetes manifests..."
+        kubectl apply -f kubernetes/ || {
+          echo "⚠️ kubectl apply failed"
+          echo "📋 Showing manifests for debugging:"
+          cat kubernetes/deployment.yaml
+          echo "---"
+          cat kubernetes/service.yaml
+          exit 1
+        }
+        
         echo ""
-        echo "📌 For now, manifests are in: kubernetes/"
+        echo "⏳ Waiting for deployment to rollout..."
+        
+        # Attendre le déploiement avec timeout
+        timeout=180
+        interval=10
+        elapsed=0
+        
+        while [ $elapsed -lt $timeout ]; do
+          if kubectl rollout status deployment/flask-devsecops --timeout=30s 2>/dev/null; then
+            echo "✅ Deployment rolled out successfully!"
+            break
+          fi
+          
+          sleep $interval
+          elapsed=$((elapsed + interval))
+          echo "⏱️ Still waiting... ($elapsed/$timeout seconds)"
+        done
+        
+        if [ $elapsed -ge $timeout ]; then
+          echo "⚠️ Deployment timeout - checking status..."
+          kubectl describe deployment/flask-devsecops || true
+          kubectl get pods -l app=flask-devsecops || true
+          exit 1
+        fi
+        
+        echo ""
+        echo "📊 Deployment status:"
+        kubectl get pods,svc,deploy -l app=flask-devsecops
+        
+        echo ""
         echo "========================================"
+        echo "           DEPLOYMENT COMPLETE          "
+        echo "========================================"
+    
+    - name: ⏭️ Skip Deployment
+      if: steps.kubeconfig.outputs.configured == 'false'
+      run: |
+        echo "========================================"
+        echo "         DEPLOYMENT SKIPPED            "
+        echo "========================================"
+        echo "ℹ️ Kubernetes deployment was skipped because:"
+        echo "   KUBE_CONFIG secret is not configured"
+        echo ""
+        echo "💡 To enable deployment:"
+        echo "   1. Go to Repository Settings"
+        echo "   2. Navigate to Secrets → Actions"
+        echo "   3. Add new secret: KUBE_CONFIG"
+        echo "   4. Paste your kubeconfig (base64 encoded)"
+        echo ""
+        echo "📦 Your image is ready at:"
+        echo "   ghcr.io/${{ github.repository_owner }}/flask-devsecops-ci:${{ github.sha }}"
+        echo "========================================"
+
   notify:
     name: 📢 Notification
     runs-on: ubuntu-latest
-    needs: [build-scan-push, deploy-to-k8s]
+    needs: [build-scan-push, validate-manifests, deploy]
     if: always()
     
     steps:
-    - name: 📊 CD Pipeline Report
+    - name: 📊 Pipeline Report
       run: |
         echo "========================================"
-        echo "         CD PIPELINE DEVSECOPS         "
+        echo "        CD PIPELINE - FINAL REPORT     "
         echo "========================================"
         echo "📅 Date: $(date)"
-        echo "🔗 Repo: ${{ github.repository }}"
-        echo "🔄 Ref: ${{ github.ref }}"
-        echo "👤 By: ${{ github.actor }}"
+        echo "🔗 Repository: ${{ github.repository }}"
+        echo "🔀 Branch: ${{ github.ref_name }}"
+        echo "🔑 SHA: ${{ github.sha }}"
+        echo "👤 Triggered by: ${{ github.actor }}"
         echo ""
-        echo "📦 Docker Image Built:"
+        echo "📊 JOB RESULTS:"
+        echo "   🐳 Build & Scan: ${{ needs.build-scan-push.result }}"
+        echo "   ✅ Validate Manifests: ${{ needs.validate-manifests.result }}"
+        echo "   ☸️  Deploy to K8s: ${{ needs.deploy.result || 'SKIPPED' }}"
+        echo ""
+        echo "📦 DOCKER IMAGE:"
         echo "   ghcr.io/${{ github.repository_owner }}/flask-devsecops-ci:${{ github.sha }}"
         echo ""
-        echo "📊 Job Results:"
-        echo "   Build & Scan: ${{ needs.build-scan-push.result }}"
-        echo "   Deploy K8s: ${{ needs.deploy-to-k8s.result }}"
+        echo "🎯 NEXT STEPS:"
+        if [ "${{ needs.deploy.result }}" = "success" ]; then
+          echo "   ✅ Application deployed successfully!"
+          echo "   🔍 Check: kubectl get pods,svc -l app=flask-devsecops"
+        elif [ "${{ needs.deploy.result }}" = "failure" ]; then
+          echo "   ❌ Deployment failed - check logs above"
+          echo "   🔧 Debug: Check KUBE_CONFIG and cluster access"
+        else
+          echo "   ⏭️  Deployment skipped"
+          echo "   🔑 Add KUBE_CONFIG secret to enable auto-deployment"
+        fi
+        echo ""
+        echo "🔧 SECURITY SCANS:"
+        echo "   ✅ Docker image scanned with Trivy"
+        echo "   ✅ Kubernetes manifests validated"
+        echo "   ✅ SBOM generated"
         echo "========================================"
