@@ -20,7 +20,7 @@ spec:
         runAsUser: 1000
       containers:
       - name: flask-app
-        image: ghcr.io/kawtarmiridi36/flask-devsecops-ci:latest
+        image: ghcr.io/kawtarmiridi36/flask-devsecops-ci:test
         imagePullPolicy: Always
         ports:
         - containerPort: 5000
