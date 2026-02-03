@@ -34,7 +34,7 @@ spec:
       containers:
       - name: flask-app
         # This will be replaced by CI/CD with SHA256 digest
-        image: ghcr.io/kawtarmiridi36/flask-devsecops-ci:PLACEHOLDER
+        image: ghcr.io/${{ github.repository_owner }}/flask-devsecops-ci:PLACEHOLDER
         imagePullPolicy: Always
         securityContext:
           allowPrivilegeEscalation: false

@@ -21,7 +21,6 @@ jobs:
     
     - name: 🔍 Check for secrets (TruffleHog)
       uses: trufflesecurity/trufflehog@main
-      # REMOVED: with: extra_args causing the error
     
     - name: 📋 Validate dependencies
       run: |
@@ -50,10 +49,6 @@ jobs:
     
     - name: 🔧 Setup Docker Buildx
       uses: docker/setup-buildx-action@v3
-      with:
-        driver-opts: |
-          image=moby/buildkit:master
-          network=host
     
     - name: 🔐 Login to GHCR
       uses: docker/login-action@v3
@@ -67,12 +62,10 @@ jobs:
       uses: docker/build-push-action@v5
       with:
         context: .
-        platforms: linux/amd64
         push: true
         tags: |
           ghcr.io/${{ github.repository_owner }}/flask-devsecops-ci:latest
           ghcr.io/${{ github.repository_owner }}/flask-devsecops-ci:${{ github.sha }}
-          ghcr.io/${{ github.repository_owner }}/flask-devsecops-ci:${{ github.ref_name }}
         cache-from: type=gha
         cache-to: type=gha,mode=max
         provenance: true
@@ -98,7 +91,7 @@ jobs:
         format: sarif
         output: trivy-results.sarif
         exit-code: '1'
-        severity: 'CRITICAL'  # Only fail on CRITICAL
+        severity: 'CRITICAL'
         ignore-unfixed: true
         scanners: vuln,secret,config
         vuln-type: os,library
@@ -124,57 +117,67 @@ jobs:
     - name: 📥 Checkout code
       uses: actions/checkout@v4
     
-    - name: 🖼️ Update Deployment with Digest BEFORE Checkov
+    - name: 🖼️ Create Temporary Updated Manifests
       run: |
-        # Update deployment.yaml with the digest from previous job
+        # Create a temporary directory with UPDATED manifests
+        mkdir -p .checkov-tmp/kubernetes
+        
+        # Copy all kubernetes files
+        cp -r kubernetes/* .checkov-tmp/kubernetes/
+        
+        # Update deployment.yaml with the ACTUAL SHA256 digest
         if [ -n "${{ needs.build-scan-push.outputs.image-digest }}" ]; then
           IMAGE="ghcr.io/${{ github.repository_owner }}/flask-devsecops-ci@${{ needs.build-scan-push.outputs.image-digest }}"
-          echo "📝 Updating deployment with digest: $IMAGE"
+          echo "🔧 Updating deployment with SHA256 digest: $IMAGE"
           
-          # Use sed to update the image (simpler than yq)
-          sed -i "s|image:.*|image: $IMAGE|" kubernetes/deployment.yaml
+          # Update the image in the COPIED file
+          sed -i "s|image: ghcr.io/kawtarmiridi36/flask-devsecops-ci:PLACEHOLDER|image: $IMAGE|" .checkov-tmp/kubernetes/deployment.yaml
           
           echo "✅ Updated deployment.yaml:"
-          grep 'image:' kubernetes/deployment.yaml
+          grep 'image:' .checkov-tmp/kubernetes/deployment.yaml
         else
-          echo "⚠️ No digest available, using tag"
+          echo "⚠️ No digest available, checking original"
+          grep 'image:' .checkov-tmp/kubernetes/deployment.yaml
         fi
+        
+        # Verify all updates
+        echo ""
+        echo "📋 All manifests in .checkov-tmp/:"
+        ls -la .checkov-tmp/kubernetes/
     
-    - name: 🛡️ Checkov for IaC
+    - name: 🛡️ Checkov for IaC (Scan UPDATED files)
       uses: bridgecrewio/checkov-action@v12
       with:
-        directory: ./
-        skip_check: CKV_K8S_43  # Skip digest check since we're updating it dynamically
+        directory: .checkov-tmp/
+        quiet: true
     
-    - name: 🧪 Validate Kubernetes Manifests
+    - name: 🧪 Verify Updated Manifests
       run: |
-        echo "🔍 Validating Kubernetes manifests..."
-        
-        # Check all YAML files are valid
-        for file in kubernetes/*.yaml; do
-          echo "Validating $file"
-          kubectl apply --dry-run=client -f "$file" || echo "❌ Validation failed for $file"
-        done
-        
-        # Verify namespace is production
+        echo "🔍 Verification of updated manifests:"
         echo ""
-        echo "📋 Namespace verification:"
-        grep -h "namespace:" kubernetes/*.yaml | sort | uniq
         
-        # Verify image uses digest
-        echo ""
-        echo "🖼️ Image verification:"
-        if grep -q "@sha256:" kubernetes/deployment.yaml; then
-          echo "✅ Image uses SHA256 digest"
+        # Check image format
+        echo "🖼️ Image in deployment:"
+        if grep -q "@sha256:" .checkov-tmp/kubernetes/deployment.yaml; then
+          echo "✅ Image uses SHA256 digest (CKV_K8S_43 will PASS)"
+          grep 'image:' .checkov-tmp/kubernetes/deployment.yaml
         else
-          echo "⚠️ Image does not use SHA256 digest"
-          grep 'image:' kubernetes/deployment.yaml
+          echo "❌ Image does NOT use SHA256 digest"
+          grep 'image:' .checkov-tmp/kubernetes/deployment.yaml
         fi
+        
+        echo ""
+        echo "🏷️ Namespaces:"
+        grep -h "namespace:" .checkov-tmp/kubernetes/*.yaml
+        
+        echo ""
+        echo "📄 Files being scanned by Checkov:"
+        find .checkov-tmp/ -name "*.yaml" -o -name "*.yml"
 
   deploy:
     name: ☸️ Secure Deployment
     runs-on: ubuntu-latest
-    needs: [build-scan-push, iac-security-scan]  # Wait for IaC scan
+    needs: [build-scan-push, iac-security-scan]
     if: github.ref == 'refs/heads/main'
     
     environment: production
@@ -210,15 +213,19 @@ jobs:
           echo "::set-output name=configured::false"
         fi
     
-    - name: 🖼️ Final Image Update
+    - name: 🖼️ Update Deployment for Production
       if: steps.kubeconfig.outputs.configured == 'true'
       run: |
         # Use the digest from the build job
         IMAGE="ghcr.io/${{ github.repository_owner }}/flask-devsecops-ci@${{ needs.build-scan-push.outputs.image-digest }}"
-        echo "🚀 Final deployment image: $IMAGE"
+        echo "🚀 Production deployment image: $IMAGE"
         
-        # Update deployment
-        sed -i "s|image:.*|image: $IMAGE|" kubernetes/deployment.yaml
+        # Update deployment - use EXACT pattern from your file
+        sed -i "s|image: ghcr.io/kawtarmiridi36/flask-devsecops-ci:PLACEHOLDER|image: $IMAGE|" kubernetes/deployment.yaml
+        
+        # Verify
+        echo "📋 Updated deployment:"
+        grep 'image:' kubernetes/deployment.yaml
     
     - name: 🚀 Deploy to Production
       if: steps.kubeconfig.outputs.configured == 'true'

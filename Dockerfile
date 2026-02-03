@@ -1,6 +1,6 @@
 # -------- STAGE 1 : build + installation deps --------
 # Use specific, patched version instead of generic tag
-FROM python:3.12.8-slim-bookworm@sha256:abc123... AS builder
+FROM python:3.12.8-slim-bookworm AS builder
 
 # Add security scanning metadata
 LABEL org.opencontainers.image.source="https://github.com/${{ github.repository }}"
@@ -45,7 +45,7 @@ RUN python -m venv --without-pip /opt/venv && \
     /opt/venv/bin/pip install --no-cache-dir --require-hashes -r requirements.txt
 
 # -------- STAGE 2 : production image --------
-FROM python:3.12.8-slim-bookworm@sha256:abc123...
+FROM python:3.12.8-slim-bookworm AS builder
 
 # Same security hardening
 ENV DEBIAN_FRONTEND=noninteractive \
