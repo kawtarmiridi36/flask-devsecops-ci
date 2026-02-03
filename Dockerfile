@@ -1,12 +1,12 @@
 # -------- STAGE 1 : build + installation deps --------
-FROM python:3.12-slim AS builder
+FROM python:3.12-slim-bookworm AS builder
 
 # Désactiver les interactions apt
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Installer les dépendances système minimales
+# Installer les dépendances système minimales avec versions fixées
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
+    build-essential=12.9 \
     && rm -rf /var/lib/apt/lists/*
 
 # Dossier de travail
@@ -21,7 +21,7 @@ RUN python -m venv /opt/venv && \
     /opt/venv/bin/pip install --no-cache-dir -r requirements.txt
 
 # -------- STAGE 2 : image finale minimale --------
-FROM python:3.12-slim
+FROM python:3.12-slim-bookworm
 
 ENV DEBIAN_FRONTEND=noninteractive
 
