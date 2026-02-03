@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: flask-devsecops
-  namespace: default
+  namespace: production  # Changed from "default"
   labels:
     app: flask-devsecops
 spec:
@@ -15,13 +15,26 @@ spec:
       labels:
         app: flask-devsecops
     spec:
+      automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
-        runAsUser: 1000
+        runAsUser: 10001
+        seccompProfile:
+          type: RuntimeDefault
       containers:
       - name: flask-app
-        image: ghcr.io/kawtarmiridi36/flask-devsecops-ci:test
+        # This will be replaced by CI/CD with the actual digest
+        image: ghcr.io/kawtarmiridi36/flask-devsecops-ci:PLACEHOLDER
         imagePullPolicy: Always
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+              - ALL
+              - NET_RAW
+          runAsNonRoot: true
+          runAsUser: 10001
         ports:
         - containerPort: 5000
           name: http
@@ -49,3 +62,9 @@ spec:
             port: 5000
           initialDelaySeconds: 5
           periodSeconds: 5
+        volumeMounts:
+        - name: tmp-volume
+          mountPath: /tmp
+      volumes:
+      - name: tmp-volume
+        emptyDir: {}

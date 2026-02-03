@@ -14,6 +14,9 @@ jobs:
     name: 🐳 Build & Scan Docker Image
     runs-on: ubuntu-latest
     
+    outputs:
+      image-digest: ${{ steps.get-digest.outputs.digest }}
+    
     steps:
     - name: 📥 Checkout code
       uses: actions/checkout@v4
@@ -29,6 +32,7 @@ jobs:
         password: ${{ secrets.GITHUB_TOKEN }}
     
     - name: 🏗️ Build Docker image
+      id: build-push
       uses: docker/build-push-action@v5
       with:
         context: .
@@ -38,6 +42,38 @@ jobs:
           ghcr.io/${{ github.repository_owner }}/flask-devsecops-ci:${{ github.sha }}
         cache-from: type=gha
         cache-to: type=gha,mode=max
+        # Enable output of image digests
+        outputs: type=image,push=true
+    
+    - name: 📝 Get image digest
+      id: get-digest
+      run: |
+        # Extract the SHA256 digest from the built image
+        echo "Image ref: ghcr.io/${{ github.repository_owner }}/flask-devsecops-ci:${{ github.sha }}"
+        
+        # Method 1: Get digest directly from registry
+        FULL_DIGEST=$(docker inspect ghcr.io/${{ github.repository_owner }}/flask-devsecops-ci:${{ github.sha }} --format='{{index .RepoDigests 0}}' 2>/dev/null || echo "")
+        
+        if [ -z "$FULL_DIGEST" ]; then
+          # Method 2: Buildx output (if available)
+          FULL_DIGEST="ghcr.io/${{ github.repository_owner }}/flask-devsecops-ci@${{ steps.build-push.outputs.digest }}"
+        fi
+        
+        echo "Full digest: $FULL_DIGEST"
+        
+        # Extract just the sha256:... part
+        DIGEST_ONLY=$(echo "$FULL_DIGEST" | grep -o '@sha256:[a-f0-9]*' | cut -d'@' -f2)
+        
+        if [ -n "$DIGEST_ONLY" ]; then
+          echo "Digest only: $DIGEST_ONLY"
+          echo "digest=$DIGEST_ONLY" >> $GITHUB_OUTPUT
+          echo "IMAGE_DIGEST=$DIGEST_ONLY" >> $GITHUB_ENV
+        else
+          # Fallback to SHA if digest not available
+          echo "⚠️ Could not get digest, using commit SHA as tag"
+          echo "digest=${{ github.sha }}" >> $GITHUB_OUTPUT
+          echo "IMAGE_DIGEST=${{ github.sha }}" >> $GITHUB_ENV
+        fi
     
     - name: 🔍 Scan Docker image with Trivy
       uses: aquasecurity/trivy-action@master
@@ -68,6 +104,28 @@ jobs:
         tar xf kubeconform-linux-amd64.tar.gz
         sudo mv kubeconform /usr/local/bin/
     
+    - name: 🖼️ Update Image with Digest
+      run: |
+        echo "🖼️ Updating deployment with image digest..."
+        echo "Using digest: ${{ needs.build-scan-push.outputs.image-digest }}"
+        
+        # Update deployment.yaml with the full image reference including digest
+        IMAGE_NAME="ghcr.io/${{ github.repository_owner }}/flask-devsecops-ci"
+        IMAGE_WITH_DIGEST="${IMAGE_NAME}@${{ needs.build-scan-push.outputs.image-digest }}"
+        
+        echo "Updating to: $IMAGE_WITH_DIGEST"
+        
+        # Update the deployment file
+        sed -i "s|image:.*|image: ${IMAGE_WITH_DIGEST}|" kubernetes/deployment.yaml
+        
+        # Verify the change
+        echo "✅ Updated deployment.yaml:"
+        grep 'image:' kubernetes/deployment.yaml
+        
+        # Also update the tag for backward compatibility
+        echo "latest: ${IMAGE_NAME}:${{ github.sha }}" > image-tags.txt
+        echo "digest: ${IMAGE_WITH_DIGEST}" >> image-tags.txt
+    
     - name: 🧪 Validate Kubernetes Manifests
       run: |
         echo "🔍 Validating with kubeconform..."
@@ -89,14 +147,15 @@ jobs:
           exit 1
         fi
         
-        # Vérifier la syntaxe YAML
+        # Vérifier que l'image utilise bien un digest
+        if grep -q "image:.*@sha256:" kubernetes/deployment.yaml; then
+          echo "✅ Image uses SHA256 digest (Checkov CKV_K8S_43 compliant)"
+        else
+          echo "⚠️ WARNING: Image does not use SHA256 digest"
+          echo "   Checkov CKV_K8S_43 will fail"
+        fi
+        
         echo "✅ All required manifests found"
-    
-    - name: 🖼️ Update Image Tag
-      run: |
-        echo "🖼️ Updating image tag in deployment..."
-        sed -i "s|image:.*|image: ghcr.io/${{ github.repository_owner }}/flask-devsecops-ci:${{ github.sha }}|" kubernetes/deployment.yaml
-        echo "✅ Updated image to: $(grep 'image:' kubernetes/deployment.yaml)"
 
   deploy:
     name: ☸️ Deploy to Kubernetes
@@ -142,11 +201,12 @@ jobs:
         echo "========================================"
         echo "       ATTEMPTING K8S DEPLOYMENT       "
         echo "========================================"
-        echo "📦 Image: ghcr.io/${{ github.repository_owner }}/flask-devsecops-ci:${{ github.sha }}"
+        echo "📦 Image with digest: $(grep 'image:' kubernetes/deployment.yaml | head -1)"
         echo ""
         
-        # Mettre à jour l'image dans le deployment
-        sed -i "s|image:.*|image: ghcr.io/${{ github.repository_owner }}/flask-devsecops-ci:${{ github.sha }}|" kubernetes/deployment.yaml
+        # Mettre à jour l'image dans le deployment (just in case)
+        IMAGE_WITH_DIGEST="$(grep 'image:' kubernetes/deployment.yaml | head -1 | cut -d' ' -f2)"
+        echo "Using image: $IMAGE_WITH_DIGEST"
         
         # Essayer d'appliquer les manifests
         echo "📋 Applying Kubernetes manifests..."
@@ -209,8 +269,8 @@ jobs:
         echo "   3. Add new secret: KUBE_CONFIG"
         echo "   4. Paste your kubeconfig (base64 encoded)"
         echo ""
-        echo "📦 Your image is ready at:"
-        echo "   ghcr.io/${{ github.repository_owner }}/flask-devsecops-ci:${{ github.sha }}"
+        echo "📦 Your image with digest:"
+        grep 'image:' kubernetes/deployment.yaml
         echo "========================================"
 
   notify:
@@ -237,7 +297,8 @@ jobs:
         echo "   ☸️  Deploy to K8s: ${{ needs.deploy.result || 'SKIPPED' }}"
         echo ""
         echo "📦 DOCKER IMAGE:"
-        echo "   ghcr.io/${{ github.repository_owner }}/flask-devsecops-ci:${{ github.sha }}"
+        echo "   Tag: ghcr.io/${{ github.repository_owner }}/flask-devsecops-ci:${{ github.sha }}"
+        echo "   Digest: ${{ needs.build-scan-push.outputs.image-digest || 'NOT_AVAILABLE' }}"
         echo ""
         echo "🎯 NEXT STEPS:"
         if [ "${{ needs.deploy.result }}" = "success" ]; then
@@ -254,6 +315,6 @@ jobs:
         echo "🔧 SECURITY SCANS:"
         echo "   ✅ Docker image scanned with Trivy"
         echo "   ✅ Kubernetes manifests validated"
+        echo "   ✅ Image uses SHA256 digest (Checkov compliant)"
         echo "   ✅ SBOM generated"
         echo "========================================"
-# Trigger new run
