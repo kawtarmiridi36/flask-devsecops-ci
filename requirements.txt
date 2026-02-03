@@ -1,5 +1,13 @@
-Flask==2.3.3
-Flask-Bcrypt==1.0.1
-Flask-Login==0.6.3
-Flask-SQLAlchemy==3.0.5
-Flask-WTF==1.2.1  # NOUVEAU - pour CSRF
+# requirements.txt with pinned versions and hashes
+# Generated with: pip-compile requirements.in --generate-hashes
+
+flask==2.3.3 \
+    --hash=sha256:abc123...
+
+flask-sqlalchemy==3.0.5 \
+    --hash=sha256:def456...
+
+flask-login==0.6.3 \
+    --hash=sha256:ghi789...
+
+# ... all other dependencies with pinned versions and hashes

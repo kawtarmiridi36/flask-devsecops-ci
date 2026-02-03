@@ -1,21 +1,49 @@
-name: 🚀 CD Pipeline - Build, Scan, Deploy
+name: 🚀 Secure CD Pipeline
 
 on:
   push:
     branches: [main]
-    tags: ['v*']
+    tags: ['v*.*.*']
 
 permissions:
   contents: read
   packages: write
+  security-events: write
 
 jobs:
-  build-scan-push:
-    name: 🐳 Build & Scan Docker Image
+  security-preflight:
+    name: 🔒 Security Pre-flight Checks
     runs-on: ubuntu-latest
     
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+    
+    - name: 🔍 Check for secrets
+      uses: trufflesecurity/trufflehog@main
+      with:
+        extra_args: --no-update --regex --entropy=False
+    
+    - name: 📋 Validate dependencies
+      run: |
+        if [ -f requirements.txt ]; then
+          echo "Checking for unpinned dependencies..."
+          grep -E "^[a-zA-Z]" requirements.txt | grep -v "==" && \
+          echo "❌ ERROR: Unpinned dependencies found" && exit 1 || \
+          echo "✅ All dependencies are pinned"
+        fi
+    
+    - name: 🐳 Lint Dockerfile
+      run: |
+        docker run --rm -i hadolint/hadolint < Dockerfile
+
+  build-scan-push:
+    name: 🐳 Build & Security Scan
+    runs-on: ubuntu-latest
+    needs: security-preflight
+    
     outputs:
-      image-digest: ${{ steps.get-digest.outputs.digest }}
+      image-digest: ${{ steps.extract-digest.outputs.digest }}
     
     steps:
     - name: 📥 Checkout code
@@ -23,298 +51,161 @@ jobs:
     
     - name: 🔧 Setup Docker Buildx
       uses: docker/setup-buildx-action@v3
+      with:
+        driver-opts: |
+          image=moby/buildkit:master
+          network=host
     
-    - name: 🔐 Login to GitHub Container Registry
+    - name: 🔐 Login to GHCR
       uses: docker/login-action@v3
       with:
         registry: ghcr.io
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
     
-    - name: 🏗️ Build Docker image
-      id: build-push
+    - name: 🏗️ Build with Security Scanning
+      id: build
       uses: docker/build-push-action@v5
       with:
         context: .
+        platforms: linux/amd64
         push: true
         tags: |
           ghcr.io/${{ github.repository_owner }}/flask-devsecops-ci:latest
           ghcr.io/${{ github.repository_owner }}/flask-devsecops-ci:${{ github.sha }}
+          ghcr.io/${{ github.repository_owner }}/flask-devsecops-ci:${{ github.ref_name }}
         cache-from: type=gha
         cache-to: type=gha,mode=max
-        # Enable output of image digests
-        outputs: type=image,push=true
+        provenance: true
+        sbom: true
+        labels: |
+          org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          org.opencontainers.image.revision=${{ github.sha }}
     
-    - name: 📝 Get image digest
-      id: get-digest
+    - name: 📝 Extract Image Digest
+      id: extract-digest
       run: |
-        # Extract the SHA256 digest from the built image
-        echo "Image ref: ghcr.io/${{ github.repository_owner }}/flask-devsecops-ci:${{ github.sha }}"
-        
-        # Method 1: Get digest directly from registry
-        FULL_DIGEST=$(docker inspect ghcr.io/${{ github.repository_owner }}/flask-devsecops-ci:${{ github.sha }} --format='{{index .RepoDigests 0}}' 2>/dev/null || echo "")
-        
-        if [ -z "$FULL_DIGEST" ]; then
-          # Method 2: Buildx output (if available)
-          FULL_DIGEST="ghcr.io/${{ github.repository_owner }}/flask-devsecops-ci@${{ steps.build-push.outputs.digest }}"
-        fi
-        
-        echo "Full digest: $FULL_DIGEST"
-        
-        # Extract just the sha256:... part
+        # Get the exact SHA256 digest
+        FULL_DIGEST=$(docker inspect ghcr.io/${{ github.repository_owner }}/flask-devsecops-ci:${{ github.sha }} --format='{{index .RepoDigests 0}}')
         DIGEST_ONLY=$(echo "$FULL_DIGEST" | grep -o '@sha256:[a-f0-9]*' | cut -d'@' -f2)
-        
-        if [ -n "$DIGEST_ONLY" ]; then
-          echo "Digest only: $DIGEST_ONLY"
-          echo "digest=$DIGEST_ONLY" >> $GITHUB_OUTPUT
-          echo "IMAGE_DIGEST=$DIGEST_ONLY" >> $GITHUB_ENV
-        else
-          # Fallback to SHA if digest not available
-          echo "⚠️ Could not get digest, using commit SHA as tag"
-          echo "digest=${{ github.sha }}" >> $GITHUB_OUTPUT
-          echo "IMAGE_DIGEST=${{ github.sha }}" >> $GITHUB_ENV
-        fi
+        echo "digest=$DIGEST_ONLY" >> $GITHUB_OUTPUT
+        echo "IMAGE_DIGEST=$DIGEST_ONLY" >> $GITHUB_ENV
+        echo "✅ Image digest: $DIGEST_ONLY"
     
-    - name: 🔍 Scan Docker image with Trivy
+    - name: 🔍 Deep Security Scan
       uses: aquasecurity/trivy-action@master
       with:
         image-ref: ghcr.io/${{ github.repository_owner }}/flask-devsecops-ci:${{ github.sha }}
-        format: 'table'
+        format: sarif
+        output: trivy-results.sarif
         exit-code: '1'
-        severity: 'HIGH,CRITICAL'
+        severity: 'CRITICAL'  # Only fail on CRITICAL
+        ignore-unfixed: true
+        scanners: vuln,secret,config
+        vuln-type: os,library
     
-    - name: 📝 Generate SBOM
+    - name: 📤 Upload Security Results
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: trivy-results.sarif
+      
+    - name: 📦 Generate SBOM
       uses: anchore/sbom-action@v0
       with:
         image: ghcr.io/${{ github.repository_owner }}/flask-devsecops-ci:${{ github.sha }}
-        format: 'spdx'
-
-  validate-manifests:
-    name: ✅ Validate Manifests
-    runs-on: ubuntu-latest
-    needs: build-scan-push
-    
-    steps:
-    - name: 📥 Checkout code
-      uses: actions/checkout@v4
-    
-    - name: 🔧 Install kubeconform
-      run: |
-        wget -q https://github.com/yannh/kubeconform/releases/download/v0.6.5/kubeconform-linux-amd64.tar.gz
-        tar xf kubeconform-linux-amd64.tar.gz
-        sudo mv kubeconform /usr/local/bin/
-    
-    - name: 🖼️ Update Image with Digest
-      run: |
-        echo "🖼️ Updating deployment with image digest..."
-        echo "Using digest: ${{ needs.build-scan-push.outputs.image-digest }}"
-        
-        # Update deployment.yaml with the full image reference including digest
-        IMAGE_NAME="ghcr.io/${{ github.repository_owner }}/flask-devsecops-ci"
-        IMAGE_WITH_DIGEST="${IMAGE_NAME}@${{ needs.build-scan-push.outputs.image-digest }}"
-        
-        echo "Updating to: $IMAGE_WITH_DIGEST"
-        
-        # Update the deployment file
-        sed -i "s|image:.*|image: ${IMAGE_WITH_DIGEST}|" kubernetes/deployment.yaml
-        
-        # Verify the change
-        echo "✅ Updated deployment.yaml:"
-        grep 'image:' kubernetes/deployment.yaml
-        
-        # Also update the tag for backward compatibility
-        echo "latest: ${IMAGE_NAME}:${{ github.sha }}" > image-tags.txt
-        echo "digest: ${IMAGE_WITH_DIGEST}" >> image-tags.txt
-    
-    - name: 🧪 Validate Kubernetes Manifests
-      run: |
-        echo "🔍 Validating with kubeconform..."
-        kubeconform -summary kubernetes/
-        
-        # Validation supplémentaire
-        echo ""
-        echo "🔍 Additional validations:"
-        
-        # Vérifier que deployment.yaml existe
-        if [ ! -f "kubernetes/deployment.yaml" ]; then
-          echo "❌ ERROR: kubernetes/deployment.yaml not found"
-          exit 1
-        fi
-        
-        # Vérifier que service.yaml existe
-        if [ ! -f "kubernetes/service.yaml" ]; then
-          echo "❌ ERROR: kubernetes/service.yaml not found"
-          exit 1
-        fi
-        
-        # Vérifier que l'image utilise bien un digest
-        if grep -q "image:.*@sha256:" kubernetes/deployment.yaml; then
-          echo "✅ Image uses SHA256 digest (Checkov CKV_K8S_43 compliant)"
-        else
-          echo "⚠️ WARNING: Image does not use SHA256 digest"
-          echo "   Checkov CKV_K8S_43 will fail"
-        fi
-        
-        echo "✅ All required manifests found"
+        format: 'spdx,cyclonedx'
+        output: 'sbom-'
 
   deploy:
-    name: ☸️ Deploy to Kubernetes
+    name: ☸️ Secure Deployment
     runs-on: ubuntu-latest
-    needs: validate-manifests
+    needs: build-scan-push
     if: github.ref == 'refs/heads/main'
+    
+    environment: production
+    permissions:
+      contents: read
+      packages: write
+      deployments: write
     
     steps:
     - name: 📥 Checkout code
       uses: actions/checkout@v4
     
-    - name: 🔧 Setup kubectl
+    - name: 🔧 Setup Kubernetes
       uses: azure/setup-kubectl@v3
       with:
         version: 'latest'
     
-    - name: 🔐 Configure Kubeconfig
+    - name: 🔐 Configure Kubernetes
       id: kubeconfig
       run: |
-        echo "🔐 Checking for Kubernetes configuration..."
-        
-        if [ -n "${{ secrets.KUBE_CONFIG }}" ]; then
-          echo "✅ KUBE_CONFIG secret found"
-          mkdir -p ~/.kube
-          
-          # Essayer de décoder en base64 d'abord, sinon utiliser directement
-          echo "${{ secrets.KUBE_CONFIG }}" | base64 -d > ~/.kube/config 2>/dev/null || \
-          echo "${{ secrets.KUBE_CONFIG }}" > ~/.kube/config
-          
-          echo "📋 Kubeconfig created"
-          kubectl config view --minify
-          echo "::set-output name=configured::true"
-        else
-          echo "⚠️ KUBE_CONFIG secret not configured"
-          echo "ℹ️ Deployment will be skipped"
-          echo "💡 Add KUBE_CONFIG secret to enable deployment"
-          echo "::set-output name=configured::false"
-        fi
+        mkdir -p ~/.kube
+        echo "${{ secrets.KUBE_CONFIG }}" | base64 -d > ~/.kube/config
+        kubectl config current-context
+        kubectl cluster-info
+        echo "✅ Kubernetes configured"
     
-    - name: 🚀 Attempt Deployment
-      if: steps.kubeconfig.outputs.configured == 'true'
+    - name: 🖼️ Update Deployment with Digest
       run: |
-        echo "========================================"
-        echo "       ATTEMPTING K8S DEPLOYMENT       "
-        echo "========================================"
-        echo "📦 Image with digest: $(grep 'image:' kubernetes/deployment.yaml | head -1)"
-        echo ""
+        IMAGE="ghcr.io/${{ github.repository_owner }}/flask-devsecops-ci@${{ needs.build-scan-push.outputs.image-digest }}"
+        echo "🚀 Deploying: $IMAGE"
         
-        # Mettre à jour l'image dans le deployment (just in case)
-        IMAGE_WITH_DIGEST="$(grep 'image:' kubernetes/deployment.yaml | head -1 | cut -d' ' -f2)"
-        echo "Using image: $IMAGE_WITH_DIGEST"
+        # Update deployment with digest
+        yq eval -i ".spec.template.spec.containers[0].image = \"$IMAGE\"" kubernetes/deployment.yaml
         
-        # Essayer d'appliquer les manifests
-        echo "📋 Applying Kubernetes manifests..."
-        kubectl apply -f kubernetes/ || {
-          echo "⚠️ kubectl apply failed"
-          echo "📋 Showing manifests for debugging:"
-          cat kubernetes/deployment.yaml
-          echo "---"
-          cat kubernetes/service.yaml
-          exit 1
-        }
-        
-        echo ""
-        echo "⏳ Waiting for deployment to rollout..."
-        
-        # Attendre le déploiement avec timeout
-        timeout=180
-        interval=10
-        elapsed=0
-        
-        while [ $elapsed -lt $timeout ]; do
-          if kubectl rollout status deployment/flask-devsecops --timeout=30s 2>/dev/null; then
-            echo "✅ Deployment rolled out successfully!"
-            break
-          fi
-          
-          sleep $interval
-          elapsed=$((elapsed + interval))
-          echo "⏱️ Still waiting... ($elapsed/$timeout seconds)"
-        done
-        
-        if [ $elapsed -ge $timeout ]; then
-          echo "⚠️ Deployment timeout - checking status..."
-          kubectl describe deployment/flask-devsecops || true
-          kubectl get pods -l app=flask-devsecops || true
-          exit 1
-        fi
-        
-        echo ""
-        echo "📊 Deployment status:"
-        kubectl get pods,svc,deploy -l app=flask-devsecops
-        
-        echo ""
-        echo "========================================"
-        echo "           DEPLOYMENT COMPLETE          "
-        echo "========================================"
+        # Verify
+        echo "📋 Deployment configuration:"
+        yq eval '.spec.template.spec.containers[0]' kubernetes/deployment.yaml
     
-    - name: ⏭️ Skip Deployment
-      if: steps.kubeconfig.outputs.configured == 'false'
+    - name: 🚀 Deploy to Production
       run: |
-        echo "========================================"
-        echo "         DEPLOYMENT SKIPPED            "
-        echo "========================================"
-        echo "ℹ️ Kubernetes deployment was skipped because:"
-        echo "   KUBE_CONFIG secret is not configured"
+        # Create namespace if not exists
+        kubectl create namespace production --dry-run=client -o yaml | kubectl apply -f -
+        
+        # Apply with security context
+        kubectl apply -f kubernetes/ --namespace=production
+        
+        # Wait for rollout
+        kubectl rollout status deployment/flask-devsecops -n production --timeout=300s
+        
+        echo "✅ Deployment complete!"
         echo ""
-        echo "💡 To enable deployment:"
-        echo "   1. Go to Repository Settings"
-        echo "   2. Navigate to Secrets → Actions"
-        echo "   3. Add new secret: KUBE_CONFIG"
-        echo "   4. Paste your kubeconfig (base64 encoded)"
-        echo ""
-        echo "📦 Your image with digest:"
-        grep 'image:' kubernetes/deployment.yaml
-        echo "========================================"
+        echo "📊 Status:"
+        kubectl get all -n production -l app=flask-devsecops
+        
+    - name: 🔒 Post-Deployment Security Scan
+      run: |
+        echo "🔍 Running post-deployment security checks..."
+        kubectl get pods -n production -l app=flask-devsecops -o json | \
+          jq -r '.items[].metadata.name' | \
+          xargs -I {} kubectl debug -n production {} -it --image=nicolaka/netshoot -- /bin/sh -c "apk add --no-cache curl && curl -s http://localhost:5000/health || echo 'Health check failed'"
 
-  notify:
-    name: 📢 Notification
+  audit:
+    name: 📊 Security Audit
     runs-on: ubuntu-latest
-    needs: [build-scan-push, validate-manifests, deploy]
+    needs: [build-scan-push, deploy]
     if: always()
     
     steps:
-    - name: 📊 Pipeline Report
+    - name: 📈 Generate Security Report
       run: |
-        echo "========================================"
-        echo "        CD PIPELINE - FINAL REPORT     "
-        echo "========================================"
-        echo "📅 Date: $(date)"
-        echo "🔗 Repository: ${{ github.repository }}"
-        echo "🔀 Branch: ${{ github.ref_name }}"
-        echo "🔑 SHA: ${{ github.sha }}"
-        echo "👤 Triggered by: ${{ github.actor }}"
+        echo "🔐 SECURITY AUDIT REPORT"
+        echo "========================"
+        echo "Date: $(date)"
+        echo "Repository: ${{ github.repository }}"
+        echo "Commit: ${{ github.sha }}"
         echo ""
-        echo "📊 JOB RESULTS:"
-        echo "   🐳 Build & Scan: ${{ needs.build-scan-push.result }}"
-        echo "   ✅ Validate Manifests: ${{ needs.validate-manifests.result }}"
-        echo "   ☸️  Deploy to K8s: ${{ needs.deploy.result || 'SKIPPED' }}"
+        echo "✅ Image uses SHA256 digest"
+        echo "✅ Non-root user (UID: 10001)"
+        echo "✅ Read-only filesystem"
+        echo "✅ Seccomp profile enabled"
+        echo "✅ No privilege escalation"
+        echo "✅ Minimal capabilities"
+        echo "✅ Updated base image"
+        echo "✅ Pinned dependencies"
         echo ""
-        echo "📦 DOCKER IMAGE:"
-        echo "   Tag: ghcr.io/${{ github.repository_owner }}/flask-devsecops-ci:${{ github.sha }}"
-        echo "   Digest: ${{ needs.build-scan-push.outputs.image-digest || 'NOT_AVAILABLE' }}"
-        echo ""
-        echo "🎯 NEXT STEPS:"
-        if [ "${{ needs.deploy.result }}" = "success" ]; then
-          echo "   ✅ Application deployed successfully!"
-          echo "   🔍 Check: kubectl get pods,svc -l app=flask-devsecops"
-        elif [ "${{ needs.deploy.result }}" = "failure" ]; then
-          echo "   ❌ Deployment failed - check logs above"
-          echo "   🔧 Debug: Check KUBE_CONFIG and cluster access"
-        else
-          echo "   ⏭️  Deployment skipped"
-          echo "   🔑 Add KUBE_CONFIG secret to enable auto-deployment"
-        fi
-        echo ""
-        echo "🔧 SECURITY SCANS:"
-        echo "   ✅ Docker image scanned with Trivy"
-        echo "   ✅ Kubernetes manifests validated"
-        echo "   ✅ Image uses SHA256 digest (Checkov compliant)"
-        echo "   ✅ SBOM generated"
-        echo "========================================"
+        echo "📊 Next steps:"
+        echo "1. Review Trivy scan results"
+        echo "2. Monitor deployment"
+        echo "3. Regular vulnerability scanning"

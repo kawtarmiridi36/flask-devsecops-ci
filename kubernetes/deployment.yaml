@@ -2,9 +2,10 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: flask-devsecops
-  namespace: production  # Changed from "default"
+  namespace: production
   labels:
     app: flask-devsecops
+    security-scan: "true"
 spec:
   replicas: 2
   selector:
@@ -14,16 +15,25 @@ spec:
     metadata:
       labels:
         app: flask-devsecops
+        security-scan: "true"
+      annotations:
+        container.apparmor.security.beta.kubernetes.io/flask-app: runtime/default
+        seccomp.security.alpha.kubernetes.io/pod: runtime/default
     spec:
       automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
         seccompProfile:
           type: RuntimeDefault
+        sysctls:
+        - name: net.ipv4.ip_local_port_range
+          value: "32768 60999"
       containers:
       - name: flask-app
-        # This will be replaced by CI/CD with the actual digest
+        # This will be replaced by CI/CD with SHA256 digest
         image: ghcr.io/kawtarmiridi36/flask-devsecops-ci:PLACEHOLDER
         imagePullPolicy: Always
         securityContext:
@@ -31,40 +41,119 @@ spec:
           readOnlyRootFilesystem: true
           capabilities:
             drop:
-              - ALL
-              - NET_RAW
+            - ALL
+            - NET_RAW
+            - NET_BIND_SERVICE
           runAsNonRoot: true
           runAsUser: 10001
+          runAsGroup: 10001
+          privileged: false
+          procMount: Default
         ports:
         - containerPort: 5000
           name: http
+          protocol: TCP
         env:
         - name: FLASK_ENV
           value: "production"
         - name: FLASK_APP
-          value: "app.py"
+          value: "run.py"
+        - name: GUNICORN_CMD_ARGS
+          value: "--bind=0.0.0.0:5000 --workers=2 --threads=4 --worker-class=sync"
         resources:
           requests:
-            memory: "128Mi"
-            cpu: "100m"
-          limits:
             memory: "256Mi"
-            cpu: "200m"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
         livenessProbe:
           httpGet:
             path: /health
             port: 5000
+            scheme: HTTP
           initialDelaySeconds: 30
           periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
         readinessProbe:
           httpGet:
             path: /health
             port: 5000
+            scheme: HTTP
           initialDelaySeconds: 5
           periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 1
         volumeMounts:
-        - name: tmp-volume
+        - name: tmp
           mountPath: /tmp
+          readOnly: false
+        - name: logs
+          mountPath: /var/log
+          readOnly: false
       volumes:
-      - name: tmp-volume
-        emptyDir: {}
+      - name: tmp
+        emptyDir:
+          medium: Memory
+          sizeLimit: 128Mi
+      - name: logs
+        emptyDir:
+          sizeLimit: 256Mi
+      tolerations:
+      - key: "node.kubernetes.io/not-ready"
+        operator: "Exists"
+        effect: "NoExecute"
+        tolerationSeconds: 300
+      - key: "node.kubernetes.io/unreachable"
+        operator: "Exists"
+        effect: "NoExecute"
+        tolerationSeconds: 300
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: flask-devsecops-service
+  namespace: production
+spec:
+  selector:
+    app: flask-devsecops
+  ports:
+  - port: 80
+    targetPort: 5000
+    protocol: TCP
+  type: ClusterIP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: flask-devsecops-netpolicy
+  namespace: production
+spec:
+  podSelector:
+    matchLabels:
+      app: flask-devsecops
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: ingress-nginx
+    ports:
+    - port: 5000
+      protocol: TCP
+  egress:
+  - to:
+    - ipBlock:
+        cidr: 0.0.0.0/0
+        except:
+        - 10.0.0.0/8
+        - 172.16.0.0/12
+        - 192.168.0.0/16
+    ports:
+    - port: 443
+      protocol: TCP
+    - port: 80
+      protocol: TCP

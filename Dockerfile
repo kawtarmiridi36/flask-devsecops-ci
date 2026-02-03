@@ -1,58 +1,93 @@
 # -------- STAGE 1 : build + installation deps --------
-FROM python:3.12-slim-bookworm AS builder
+# Use specific, patched version instead of generic tag
+FROM python:3.12.8-slim-bookworm@sha256:abc123... AS builder
 
-# Désactiver les interactions apt
-ENV DEBIAN_FRONTEND=noninteractive
+# Add security scanning metadata
+LABEL org.opencontainers.image.source="https://github.com/${{ github.repository }}"
+LABEL org.opencontainers.image.licenses="MIT"
+LABEL security.scan.enabled="true"
 
-# Installer les dépendances système minimales avec versions fixées
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential=12.9 \
-    && rm -rf /var/lib/apt/lists/*
+# Security hardening
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
 
-# Dossier de travail
+# 1. Update ALL packages before installing anything
+# 2. Use pinned versions for reproducibility
+# 3. Clean up immediately to reduce attack surface
+RUN apt-get update && \
+    apt-get upgrade -y --no-install-recommends && \
+    apt-get install -y --no-install-recommends \
+        build-essential=12.9 \
+        pkg-config=0.29.2-1 \
+        && \
+    apt-get autoremove -y && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+# Create non-root user for build stage too
+RUN useradd -r -u 1001 -m -d /app builder
+
+# Switch to non-root user
+USER builder
+
 WORKDIR /app
 
-# Copier uniquement les dépendances en premier (cache Docker)
-COPY requirements.txt .
+# Copy dependencies first (better layer caching)
+COPY --chown=builder:builder requirements.txt .
 
-# Créer un venv dans l'image et installer les deps
-RUN python -m venv /opt/venv && \
-    /opt/venv/bin/pip install --no-cache-dir --upgrade pip && \
-    /opt/venv/bin/pip install --no-cache-dir -r requirements.txt
+# Create virtual environment with security optimizations
+RUN python -m venv --without-pip /opt/venv && \
+    /opt/venv/bin/python -m ensurepip --upgrade && \
+    /opt/venv/bin/pip install --no-cache-dir --upgrade pip==24.0 && \
+    /opt/venv/bin/pip install --no-cache-dir --require-hashes -r requirements.txt
 
-# -------- STAGE 2 : image finale minimale --------
-FROM python:3.12-slim-bookworm
+# -------- STAGE 2 : production image --------
+FROM python:3.12.8-slim-bookworm@sha256:abc123...
 
-ENV DEBIAN_FRONTEND=noninteractive
+# Same security hardening
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PATH="/opt/venv/bin:$PATH"
 
-# Créer un utilisateur non-root
-RUN useradd -m appuser
+# Update ALL system packages in final image too
+RUN apt-get update && \
+    apt-get upgrade -y --no-install-recommends && \
+    apt-get install -y --no-install-recommends \
+        ca-certificates=20230311 \
+        libexpat1=2.5.0-1 \
+        && \
+    apt-get autoremove -y && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* && \
+    # Remove unnecessary files
+    find /usr/local -depth \
+        \( -type d -a \( -name test -o -name tests \) \) \
+        -o \( -type f -a \( -name '*.pyc' -o -name '*.pyo' \) \) \
+        -exec rm -rf '{}' + && \
+    # Create app user with high UID (>10000 for Checkov compliance)
+    useradd -r -u 10001 -m -d /app appuser
 
-# Dossier de travail
 WORKDIR /app
 
-# Copier le venv du builder
-COPY --from=builder /opt/venv /opt/venv
+# Copy virtual environment from builder
+COPY --from=builder --chown=appuser:appuser /opt/venv /opt/venv
 
-# Utiliser ce venv par défaut
-ENV PATH="/opt/venv/bin:$PATH"
+# Copy application code
+COPY --chown=appuser:appuser app ./app
+COPY --chown=appuser:appuser config.py run.py ./
 
-# Copier seulement le code de l'application
-COPY app ./app
-COPY config.py run.py ./
-
-# (Optionnel) variable d'env par défaut, à surcharger en prod
-ENV FLASK_ENV=production \
-    PYTHONUNBUFFERED=1
-
-# Donner les droits à l'utilisateur non-root
-RUN chown -R appuser:appuser /app
-
-# Basculer sur l'utilisateur non-root
+# Switch to non-root user
 USER appuser
 
-# Exposer le port de l'app
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD python -c "import requests; requests.get('http://localhost:5000/health', timeout=2)" || exit 1
+
 EXPOSE 5000
 
-# Commande de démarrage : gunicorn avec l'objet app de run.py
-CMD ["gunicorn", "-b", "0.0.0.0:5000", "run:app"]
+# Use exec form for proper signal handling
+CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "2", "--threads", "4", "--worker-class", "sync", "--access-logfile", "-", "--error-logfile", "-", "run:app"]
