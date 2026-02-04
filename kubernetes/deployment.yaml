@@ -33,13 +33,8 @@ spec:
           value: "32768 60999"
       containers:
       - name: flask-app
-        # Use specific tag + digest for security (replace with your actual tag)
-        # For GitHub Actions: ${{ github.sha }} or ${{ github.ref_name }}
-        image: ghcr.io/${{ github.repository_owner }}/flask-devsecops-ci:${{ github.sha }}
-        # Alternative with hardcoded tag (choose one):
-        # image: ghcr.io/${{ github.repository_owner }}/flask-devsecops-ci:v1.0.0
-        # With digest (most secure):
-        # image: ghcr.io/${{ github.repository_owner }}/flask-devsecops-ci:v1.0.0@sha256:YOUR_ACTUAL_SHA256_HERE
+        # This will be replaced by CI/CD with SHA256 digest
+        image: ghcr.io/kawtarmiridi36/flask-devsecops-ci:PLACEHOLDER
         imagePullPolicy: Always
         securityContext:
           allowPrivilegeEscalation: false

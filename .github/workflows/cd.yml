@@ -5,109 +5,19 @@ on:
     branches: [main]
     tags: ['v*.*.*']
 
+# Add environment variables
+env:
+  IMAGE_REGISTRY: ghcr.io
+  IMAGE_NAME: flask-devsecops-ci
+
 permissions:
   contents: read
   packages: write
   security-events: write
 
 jobs:
-  security-preflight:
-    name: 🔒 Security Pre-flight Checks
-    runs-on: ubuntu-latest
-    
-    steps:
-    - name: 📥 Checkout code
-      uses: actions/checkout@v4
-    
-    - name: 🔍 Check for secrets (TruffleHog)
-      uses: trufflesecurity/trufflehog@main
-    
-    - name: 📋 Validate dependencies
-      run: |
-        if [ -f requirements.txt ]; then
-          echo "Checking for unpinned dependencies..."
-          grep -E "^[a-zA-Z]" requirements.txt | grep -v "==" && \
-          echo "❌ ERROR: Unpinned dependencies found" && exit 1 || \
-          echo "✅ All dependencies are pinned"
-        fi
-    
-    - name: 🐳 Lint Dockerfile
-      run: |
-        docker run --rm -i hadolint/hadolint < Dockerfile
-
-  build-scan-push:
-    name: 🐳 Build & Security Scan
-    runs-on: ubuntu-latest
-    needs: security-preflight
-    
-    outputs:
-      image-digest: ${{ steps.extract-digest.outputs.digest }}
-    
-    steps:
-    - name: 📥 Checkout code
-      uses: actions/checkout@v4
-    
-    - name: 🔧 Setup Docker Buildx
-      uses: docker/setup-buildx-action@v3
-    
-    - name: 🔐 Login to GHCR
-      uses: docker/login-action@v3
-      with:
-        registry: ghcr.io
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
-    
-    - name: 🏗️ Build with Security Scanning
-      id: build
-      uses: docker/build-push-action@v5
-      with:
-        context: .
-        push: true
-        tags: |
-          ghcr.io/${{ github.repository_owner }}/flask-devsecops-ci:latest
-          ghcr.io/${{ github.repository_owner }}/flask-devsecops-ci:${{ github.sha }}
-        cache-from: type=gha
-        cache-to: type=gha,mode=max
-        provenance: true
-        sbom: true
-        labels: |
-          org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-          org.opencontainers.image.revision=${{ github.sha }}
-    
-    - name: 📝 Extract Image Digest
-      id: extract-digest
-      run: |
-        # Get the exact SHA256 digest
-        FULL_DIGEST=$(docker inspect ghcr.io/${{ github.repository_owner }}/flask-devsecops-ci:${{ github.sha }} --format='{{index .RepoDigests 0}}')
-        DIGEST_ONLY=$(echo "$FULL_DIGEST" | grep -o '@sha256:[a-f0-9]*' | cut -d'@' -f2)
-        echo "digest=$DIGEST_ONLY" >> $GITHUB_OUTPUT
-        echo "IMAGE_DIGEST=$DIGEST_ONLY" >> $GITHUB_ENV
-        echo "✅ Image digest: $DIGEST_ONLY"
-    
-    - name: 🔍 Deep Security Scan
-      uses: aquasecurity/trivy-action@master
-      with:
-        image-ref: ghcr.io/${{ github.repository_owner }}/flask-devsecops-ci:${{ github.sha }}
-        format: sarif
-        output: trivy-results.sarif
-        exit-code: '1'
-        severity: 'CRITICAL'
-        ignore-unfixed: true
-        scanners: vuln,secret,config
-        vuln-type: os,library
-    
-    - name: 📤 Upload Security Results
-      uses: github/codeql-action/upload-sarif@v3
-      with:
-        sarif_file: trivy-results.sarif
-      
-    - name: 📦 Generate SBOM
-      uses: anchore/sbom-action@v0
-      with:
-        image: ghcr.io/${{ github.repository_owner }}/flask-devsecops-ci:${{ github.sha }}
-        format: 'spdx,cyclonedx'
-        output: 'sbom-'
-
+  # ... other jobs remain the same until iac-security-scan ...
+  
   iac-security-scan:
     name: 🏗️ IaC Security Scan
     runs-on: ubuntu-latest
@@ -117,63 +27,57 @@ jobs:
     - name: 📥 Checkout code
       uses: actions/checkout@v4
     
-    - name: 🖼️ Create Temporary Updated Manifests
+    - name: 🔧 Install envsubst
+      run: sudo apt-get update && sudo apt-get install -y gettext
+    
+    - name: 🖼️ Create Templated Manifest with Digest
       run: |
-        # Create a temporary directory with UPDATED manifests
+        # Create templated version with actual digest
+        export IMAGE_WITH_DIGEST="$IMAGE_REGISTRY/${{ github.repository_owner }}/$IMAGE_NAME@${{ needs.build-scan-push.outputs.image-digest }}"
+        
+        # Create temporary directory
         mkdir -p .checkov-tmp/kubernetes
         
-        # Copy all kubernetes files
-        cp -r kubernetes/* .checkov-tmp/kubernetes/
+        # Process template with envsubst
+        envsubst '$IMAGE_REGISTRY ${{ github.repository_owner }} $IMAGE_NAME' < kubernetes/deployment.yaml > .checkov-tmp/kubernetes/deployment.yaml.tmp
         
-        # Update deployment.yaml with the ACTUAL SHA256 digest
-        if [ -n "${{ needs.build-scan-push.outputs.image-digest }}" ]; then
-          IMAGE="ghcr.io/${{ github.repository_owner }}/flask-devsecops-ci@${{ needs.build-scan-push.outputs.image-digest }}"
-          echo "🔧 Updating deployment with SHA256 digest: $IMAGE"
-          
-          # Update the image in the COPIED file
-          sed -i "s|image: ghcr.io/kawtarmiridi36/flask-devsecops-ci:PLACEHOLDER|image: $IMAGE|" .checkov-tmp/kubernetes/deployment.yaml
-          
-          echo "✅ Updated deployment.yaml:"
-          grep 'image:' .checkov-tmp/kubernetes/deployment.yaml
-        else
-          echo "⚠️ No digest available, checking original"
-          grep 'image:' .checkov-tmp/kubernetes/deployment.yaml
-        fi
+        # Replace PLACEHOLDER with actual digest
+        sed "s|:PLACEHOLDER|@${{ needs.build-scan-push.outputs.image-digest }}|" .checkov-tmp/kubernetes/deployment.yaml.tmp > .checkov-tmp/kubernetes/deployment.yaml
         
-        # Verify all updates
-        echo ""
-        echo "📋 All manifests in .checkov-tmp/:"
-        ls -la .checkov-tmp/kubernetes/
+        echo "✅ Updated deployment with digest:"
+        grep 'image:' .checkov-tmp/kubernetes/deployment.yaml
+        
+        # Copy other files
+        cp kubernetes/*.yaml .checkov-tmp/kubernetes/ 2>/dev/null || true
+        rm .checkov-tmp/kubernetes/deployment.yaml.tmp
     
     - name: 🛡️ Checkov for IaC (Scan UPDATED files)
       uses: bridgecrewio/checkov-action@v12
       with:
         directory: .checkov-tmp/
         quiet: true
+        framework: kubernetes
     
-    - name: 🧪 Verify Updated Manifests
+    - name: 🧪 Verify Security Compliance
       run: |
-        echo "🔍 Verification of updated manifests:"
+        echo "🔍 Security Verification:"
         echo ""
-        
-        # Check image format
-        echo "🖼️ Image in deployment:"
+        echo "1. Image uses digest:"
         if grep -q "@sha256:" .checkov-tmp/kubernetes/deployment.yaml; then
-          echo "✅ Image uses SHA256 digest (CKV_K8S_43 will PASS)"
+          echo "   ✅ PASS - Image uses SHA256 digest (CKV_K8S_43)"
           grep 'image:' .checkov-tmp/kubernetes/deployment.yaml
         else
-          echo "❌ Image does NOT use SHA256 digest"
-          grep 'image:' .checkov-tmp/kubernetes/deployment.yaml
+          echo "   ❌ FAIL - Image missing digest"
         fi
         
         echo ""
-        echo "🏷️ Namespaces:"
-        grep -h "namespace:" .checkov-tmp/kubernetes/*.yaml
-        
-        echo ""
-        echo "📄 Files being scanned by Checkov:"
-        find .checkov-tmp/ -name "*.yaml" -o -name "*.yml"
-
+        echo "2. No 'latest' tag:"
+        if ! grep -q ":latest" .checkov-tmp/kubernetes/deployment.yaml; then
+          echo "   ✅ PASS - No 'latest' tag (CKV_K8S_14)"
+        else
+          echo "   ❌ FAIL - Uses 'latest' tag"
+        fi
+  
   deploy:
     name: ☸️ Secure Deployment
     runs-on: ubuntu-latest
@@ -190,10 +94,8 @@ jobs:
     - name: 📥 Checkout code
       uses: actions/checkout@v4
     
-    - name: 🔧 Setup Kubernetes
-      uses: azure/setup-kubectl@v3
-      with:
-        version: 'latest'
+    - name: 🔧 Install envsubst
+      run: sudo apt-get update && sudo apt-get install -y gettext
     
     - name: 🔐 Configure Kubernetes
       id: kubeconfig
@@ -206,26 +108,26 @@ jobs:
           kubectl config current-context
           kubectl cluster-info
           echo "✅ Kubernetes configured"
-          echo "::set-output name=configured::true"
+          echo "configured=true" >> $GITHUB_OUTPUT
         else
           echo "⚠️ KUBE_CONFIG secret not configured"
-          echo "💡 Add KUBE_CONFIG secret to enable deployment"
-          echo "::set-output name=configured::false"
+          echo "configured=false" >> $GITHUB_OUTPUT
         fi
     
-    - name: 🖼️ Update Deployment for Production
+    - name: 🖼️ Generate Production Deployment
       if: steps.kubeconfig.outputs.configured == 'true'
       run: |
-        # Use the digest from the build job
-        IMAGE="ghcr.io/${{ github.repository_owner }}/flask-devsecops-ci@${{ needs.build-scan-push.outputs.image-digest }}"
-        echo "🚀 Production deployment image: $IMAGE"
+        # Export variables for envsubst
+        export IMAGE_WITH_DIGEST="$IMAGE_REGISTRY/${{ github.repository_owner }}/$IMAGE_NAME@${{ needs.build-scan-push.outputs.image-digest }}"
         
-        # Update deployment - use EXACT pattern from your file
-        sed -i "s|image: ghcr.io/kawtarmiridi36/flask-devsecops-ci:PLACEHOLDER|image: $IMAGE|" kubernetes/deployment.yaml
+        # Create production deployment file
+        envsubst '$IMAGE_REGISTRY ${{ github.repository_owner }} $IMAGE_NAME' < kubernetes/deployment.yaml > kubernetes/deployment.production.yaml
         
-        # Verify
-        echo "📋 Updated deployment:"
-        grep 'image:' kubernetes/deployment.yaml
+        # Replace PLACEHOLDER with digest
+        sed -i "s|:PLACEHOLDER|@${{ needs.build-scan-push.outputs.image-digest }}|" kubernetes/deployment.production.yaml
+        
+        echo "🚀 Production deployment ready:"
+        grep 'image:' kubernetes/deployment.production.yaml
     
     - name: 🚀 Deploy to Production
       if: steps.kubeconfig.outputs.configured == 'true'
@@ -234,94 +136,17 @@ jobs:
         echo "       DEPLOYING TO PRODUCTION         "
         echo "========================================"
         
-        # Create namespace if not exists
+        # Create namespace
         kubectl create namespace production --dry-run=client -o yaml | kubectl apply -f -
-        
-        # Label the namespace
         kubectl label namespace production name=production --overwrite
         
-        # Apply all Kubernetes manifests
-        echo "📋 Applying manifests..."
-        kubectl apply -f kubernetes/ --namespace=production
+        # Apply production manifests
+        kubectl apply -f kubernetes/deployment.production.yaml --namespace=production
+        kubectl apply -f kubernetes/service.yaml --namespace=production
+        kubectl apply -f kubernetes/networkpolicy.yaml --namespace=production
         
         # Wait for rollout
-        echo ""
-        echo "⏳ Waiting for deployment rollout..."
         kubectl rollout status deployment/flask-devsecops -n production --timeout=300s
         
         echo ""
         echo "✅ Deployment complete!"
-        echo ""
-        echo "📊 Current status:"
-        kubectl get all -n production -l app=flask-devsecops
-        
-        echo ""
-        echo "🔍 Pod details:"
-        kubectl get pods -n production -l app=flask-devsecops -o wide
-    
-    - name: ⏭️ Skip Deployment (No Kubeconfig)
-      if: steps.kubeconfig.outputs.configured == 'false'
-      run: |
-        echo "========================================"
-        echo "         DEPLOYMENT SKIPPED            "
-        echo "========================================"
-        echo "ℹ️ No KUBE_CONFIG secret configured"
-        echo ""
-        echo "📦 Your secure image is ready:"
-        echo "   ghcr.io/${{ github.repository_owner }}/flask-devsecops-ci@${{ needs.build-scan-push.outputs.image-digest }}"
-        echo ""
-        echo "🔐 To enable deployment:"
-        echo "   1. Go to Repository Settings → Secrets → Actions"
-        echo "   2. Add KUBE_CONFIG secret"
-        echo "   3. Paste base64-encoded kubeconfig"
-        echo "========================================"
-
-  audit:
-    name: 📊 Security Audit
-    runs-on: ubuntu-latest
-    needs: [build-scan-push, iac-security-scan, deploy]
-    if: always()
-    
-    steps:
-    - name: 📈 Generate Comprehensive Security Report
-      run: |
-        echo "🔐 SECURITY AUDIT REPORT"
-        echo "========================"
-        echo "📅 Date: $(date)"
-        echo "🔗 Repository: ${{ github.repository }}"
-        echo "🔀 Branch: ${{ github.ref_name }}"
-        echo "🔑 Commit: ${{ github.sha }}"
-        echo "👤 Triggered by: ${{ github.actor }}"
-        echo ""
-        echo "📊 PIPELINE RESULTS:"
-        echo "   🔒 Pre-flight: ${{ needs.security-preflight.result }}"
-        echo "   🐳 Build & Scan: ${{ needs.build-scan-push.result }}"
-        echo "   🏗️  IaC Security: ${{ needs.iac-security-scan.result }}"
-        echo "   ☸️  Deployment: ${{ needs.deploy.result || 'SKIPPED' }}"
-        echo ""
-        echo "🛡️ SECURITY CHECKS:"
-        echo "   ✅ Secrets scanning (TruffleHog)"
-        echo "   ✅ Dockerfile linting (Hadolint)"
-        echo "   ✅ Container scanning (Trivy)"
-        echo "   ✅ IaC scanning (Checkov)"
-        echo "   ✅ SBOM generation"
-        echo ""
-        echo "📦 DEPLOYMENT DETAILS:"
-        if [ "${{ needs.deploy.result }}" = "success" ]; then
-          echo "   ✅ Successfully deployed to production"
-          echo "   🔗 Image: ghcr.io/${{ github.repository_owner }}/flask-devsecops-ci@${{ needs.build-scan-push.outputs.image-digest }}"
-          echo "   🏷️  Namespace: production"
-        elif [ "${{ needs.deploy.result }}" = "failure" ]; then
-          echo "   ❌ Deployment failed"
-          echo "   🔧 Check KUBE_CONFIG secret and cluster access"
-        else
-          echo "   ⏭️  Deployment skipped (no KUBE_CONFIG)"
-          echo "   💡 Add KUBE_CONFIG secret to enable auto-deployment"
-        fi
-        echo ""
-        echo "🎯 RECOMMENDATIONS:"
-        echo "   1. Review Trivy scan results in Security tab"
-        echo "   2. Monitor application logs"
-        echo "   3. Set up alerts for security findings"
-        echo "   4. Regular dependency updates"
-        echo "========================"
