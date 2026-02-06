@@ -11,5 +11,3 @@ venv/
 
 # OS
 .DS_Store
-app/Flask_app/
-*.pyc

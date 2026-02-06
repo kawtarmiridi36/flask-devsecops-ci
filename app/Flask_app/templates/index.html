@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Flask App - Club DevSecOps</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 40px; }
+        .container { max-width: 800px; margin: 0 auto; }
+        .endpoint { background: #f5f5f5; padding: 10px; margin: 5px 0; border-radius: 5px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 Application Flask du Club DevSecOps</h1>
+        <p>Si tu vois cette page, ton application Flask est bien lancée 🎉</p>
+
+        <h2>🔐 Authentification</h2>
+        <div class="endpoint"><strong>GET</strong> <code>/auth/login</code></div>
+        <div class="endpoint"><strong>GET</strong> <code>/auth/register</code></div>
+        <div class="endpoint"><strong>POST</strong> <code>/auth/login</code></div>
+        <div class="endpoint"><strong>POST</strong> <code>/auth/register</code></div>
+        <div class="endpoint"><strong>POST</strong> <code>/auth/logout</code></div>
+        <div class="endpoint"><strong>GET</strong> <code>/auth/me</code></div>
+
+        <h2>📢 Annonces & Commentaires</h2>
+        <div class="endpoint"><strong>GET</strong> <code>/annonces/</code></div>
+        <div class="endpoint"><strong>POST</strong> <code>/annonces/</code></div>
+        <div class="endpoint"><strong>GET</strong> <code>/annonces/user/&lt;user_id&gt;</code></div>
+        <div class="endpoint"><strong>GET</strong> <code>/comments/&lt;annonce_id&gt;</code></div>
+        <div class="endpoint"><strong>POST</strong> <code>/comments/</code></div>
+        <div class="endpoint"><strong>DELETE</strong> <code>/comments/&lt;comment_id&gt;</code></div>
+
+        <h2>👥 Gestion des membres</h2>
+        <div class="endpoint"><strong>GET</strong> <code>/members/</code></div>
+        <div class="endpoint"><strong>GET</strong> <code>/members/&lt;user_id&gt;</code></div>
+        <div class="endpoint"><strong>PUT</strong> <code>/members/&lt;user_id&gt;</code></div>
+        <div class="endpoint"><strong>DELETE</strong> <code>/members/&lt;user_id&gt;</code></div>
+
+        <h2>🧪 Dev & Debug</h2>
+        <div class="endpoint"><strong>GET</strong> <code>/dev</code></div>
+        <div class="endpoint"><strong>GET</strong> <code>/health</code></div>
+
+        <h2>🔧 Interface Développeur</h2>
+        <p>Accédez à l'interface développeur : <a href="/dev" target="_blank">/dev</a></p>
+        
+        <h2>✅ Vérification</h2>
+        <p>Testez le endpoint santé : <a href="/health" target="_blank">/health</a></p>
+    </div>
+</body>
+</html>

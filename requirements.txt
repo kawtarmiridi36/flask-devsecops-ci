@@ -1,13 +1,2 @@
-# requirements.txt with pinned versions and hashes
-# Generated with: pip-compile requirements.in --generate-hashes
-
-flask==2.3.3 \
-    --hash=sha256:abc123...
-
-flask-sqlalchemy==3.0.5 \
-    --hash=sha256:def456...
-
-flask-login==0.6.3 \
-    --hash=sha256:ghi789...
-
-# ... all other dependencies with pinned versions and hashes
+# À remplir plus tard quand on fera Flask
+# Pour l'instant, juste pour faire fonctionner CI

@@ -1,10 +1,6 @@
-# Les owners par défaut pour tout le projet
-* @kawtarmiridi36 @zaki-yasmina
+# Les owners par défaut
+* @VOTRE_USERNAME @USERNAME_COLLEGUE
 
-# Protection spécifique - workflows CI/CD (sécurité critique)
-/.github/workflows/ @kawtarmiridi36 @zaki-yasmina
-
-# Docker - collaboration partagée
-/docker/ @kawtarmiridi36 @zaki-yasmina
-/docker-compose.yml @kawtarmiridi36 @zaki-yasmina
-Dockerfile @kawtarmiridi36 @zaki-yasmina
+# Protection spécifique
+/.github/workflows/ @VOTRE_USERNAME
+/docker/ @VOTRE_USERNAME
