@@ -1,13 +1,13 @@
-# kubernetes/service.yaml
 apiVersion: v1
 kind: Service
 metadata:
   name: flask-devsecops-service
-  namespace: production  # CHANGED from default
+  namespace: production
 spec:
   selector:
     app: flask-devsecops
   ports:
-  - port: 80
-    targetPort: 5000
-  type: ClusterIP  # Changed from LoadBalancer for security
+    - protocol: TCP
+      port: 5000
+      targetPort: 5000
+  type: ClusterIP
