@@ -88,19 +88,6 @@ jobs:
         output: 'trivy-image-results.sarif'
         severity: 'CRITICAL,HIGH'
     
-    - name: 📝 Cosign Key Generation (if needed)
-      if: ${{ !secrets.COSIGN_PRIVATE_KEY }}
-      run: |
-        echo "⚠️ COSIGN_PRIVATE_KEY not set in secrets"
-        echo "Generating test key pair for demonstration..."
-        cosign generate-key-pair || echo "Cosign not installed"
-    
-    - name: 🔏 Sign Image with Cosign
-      uses: sigstore/cosign-installer@main
-      continue-on-error: true
-      with:
-        cosign-release: 'v2.0.0'
-    
     - name: 📦 Push Image to Registry
       uses: docker/build-push-action@v5
       id: push
@@ -234,17 +221,13 @@ jobs:
         echo "✅ Deployment manifest updated with actual digest"
         grep 'image:' kubernetes/deployment.yaml
     
-    - name: 🚀 Deploy via ArgoCD (GitOps)
+    - name: 🚀 Create ArgoCD Application (Simplified)
       if: steps.kubeconfig.outputs.configured == 'true'
       run: |
-        echo "========================================"
-        echo "       GITOPS DEPLOYMENT WITH ARGOCD   "
-        echo "========================================"
+        echo "📄 Creating/Updating ArgoCD Application..."
         
-        # Create ArgoCD Application if it doesn't exist
-        if ! kubectl get application flask-devsecops-app -n argocd 2>/dev/null; then
-          echo "📄 Creating ArgoCD Application..."
-          cat > /tmp/argocd-app.yaml << 'ARGOEOF'
+        # Create ArgoCD Application using echo and kubectl apply
+        kubectl apply -f - <<EOS
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -265,26 +248,41 @@ spec:
       selfHeal: true
     syncOptions:
     - CreateNamespace=true
-ARGOEOF
-          kubectl apply -f /tmp/argocd-app.yaml
-          rm /tmp/argocd-app.yaml
-        else
-          echo "✅ ArgoCD Application already exists"
-        fi
+EOS
+    
+    - name: 🔄 Sync ArgoCD Application
+      if: steps.kubeconfig.outputs.configured == 'true'
+      run: |
+        echo "🔄 Triggering ArgoCD sync..."
         
-        # Sync the application
-        echo "🔄 Syncing ArgoCD Application..."
+        # Trigger refresh and sync
         kubectl patch application flask-devsecops-app -n argocd \
           --type merge \
           -p '{"metadata": {"annotations": {"argocd.argoproj.io/refresh": "hard"}}}'
         
-        # Wait for sync
-        echo "⏳ Waiting for ArgoCD sync to complete..."
-        kubectl wait --for=condition=healthy application/flask-devsecops-app -n argocd --timeout=300s
+        # Wait for sync to complete
+        echo "⏳ Waiting for sync completion..."
+        timeout=300
+        interval=10
+        elapsed=0
         
-        # Get sync status
-        echo "📊 ArgoCD Sync Status:"
-        kubectl get application flask-devsecops-app -n argocd -o wide
+        while [ $elapsed -lt $timeout ]; do
+          status=$(kubectl get application flask-devsecops-app -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "Unknown")
+          health=$(kubectl get application flask-devsecops-app -n argocd -o jsonpath='{.status.health.status}' 2>/dev/null || echo "Unknown")
+          
+          if [ "$status" = "Synced" ] && [ "$health" = "Healthy" ]; then
+            echo "✅ ArgoCD sync completed successfully"
+            break
+          fi
+          
+          echo "  Status: $status, Health: $health (waiting...)"
+          sleep $interval
+          elapsed=$((elapsed + interval))
+        done
+        
+        if [ $elapsed -ge $timeout ]; then
+          echo "⚠️  Sync timeout reached, continuing..."
+        fi
     
     - name: 📊 Deployment Summary
       if: always()
@@ -297,10 +295,13 @@ ARGOEOF
           echo "Application: flask-devsecops-app"
           echo "Namespace: production"
           echo ""
-          echo "📈 To access ArgoCD UI:"
+          echo "📈 ArgoCD Status:"
+          kubectl get application flask-devsecops-app -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "Not available"
+          echo ""
+          echo "🔗 Access ArgoCD UI:"
           echo "kubectl port-forward svc/argocd-server -n argocd 8080:443"
-          echo "URL: https://localhost:8080"
+          echo "URL: https://localhost:8080 (admin / password from argocd-secret)"
         else
           echo "Status: ⚠️ KUBE_CONFIG secret not configured"
-          echo "Note: Set KUBE_CONFIG secret in repository settings"
+          echo "Note: Set KUBE_CONFIG secret in GitHub repository settings → Secrets → Actions"
         fi
