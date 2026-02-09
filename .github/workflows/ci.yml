@@ -43,12 +43,10 @@ jobs:
     runs-on: ubuntu-latest
     needs: lint-test
 
-    # CodeQL uploads security results => needs this permission.
-    # This is safe because CodeQL steps run only on push.
+    # CodeQL uploads security results => needs these permissions
     permissions:
       contents: read
       security-events: write
-      actions: read  # ADDED: Fixes the telemetry error
 
     steps:
       - name: Checkout code
@@ -65,22 +63,19 @@ jobs:
           pip install bandit
           bandit -r app/ -f json -o bandit-report.json || true
 
-      # ✅ Correct CodeQL sequence: init -> autobuild -> analyze (ONLY on push)
+      # Simplified CodeQL without if conditions
       - name: Initialize CodeQL
-        if: ${{ github.event_name == 'push' }}
         uses: github/codeql-action/init@v3
         with:
           languages: python
 
       - name: Autobuild
-        if: ${{ github.event_name == 'push' }}
         uses: github/codeql-action/autobuild@v3
 
       - name: Perform CodeQL Analysis
-        if: ${{ github.event_name == 'push' }}
         uses: github/codeql-action/analyze@v3
-        with:
-          category: "/language:python"  # ADDED: Optional but good practice
+        env:
+          CODEQL_ACTION_TELEMETRY_OPT_OUT: "true"  # Disable telemetry to fix error
 
   dependency-check:
     name: Analyse Dépendances
@@ -101,7 +96,6 @@ jobs:
           pip install pip-audit
           pip-audit -r requirements.txt || echo "pip-audit terminé"
 
-      # Often fails on private repos if dependency graph isn't enabled.
       - name: Dependabot auto-check (Dependency Review)
         if: ${{ github.event_name == 'pull_request' }}
         continue-on-error: true
