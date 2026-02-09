@@ -230,29 +230,29 @@ jobs:
         if kubectl get application flask-devsecops-app -n argocd 2>/dev/null; then
           echo "✅ ArgoCD Application already exists"
         else
-          # Create ArgoCD Application manifest using cat with EOF
-          cat > argocd-app.yaml << 'APPLICATION_EOF'
-apiVersion: argoproj.io/v1alpha1
-kind: Application
-metadata:
-  name: flask-devsecops-app
-  namespace: argocd
-spec:
-  project: default
-  source:
-    repoURL: https://github.com/${{ github.repository }}.git
-    targetRevision: main
-    path: kubernetes
-  destination:
-    server: https://kubernetes.default.svc
-    namespace: production
-  syncPolicy:
-    automated:
-      prune: true
-      selfHeal: true
-    syncOptions:
-    - CreateNamespace=true
-APPLICATION_EOF
+          echo "Creating new ArgoCD Application..."
+          
+          # Create ArgoCD Application using echo
+          echo 'apiVersion: argoproj.io/v1alpha1' > argocd-app.yaml
+          echo 'kind: Application' >> argocd-app.yaml
+          echo 'metadata:' >> argocd-app.yaml
+          echo '  name: flask-devsecops-app' >> argocd-app.yaml
+          echo '  namespace: argocd' >> argocd-app.yaml
+          echo 'spec:' >> argocd-app.yaml
+          echo '  project: default' >> argocd-app.yaml
+          echo '  source:' >> argocd-app.yaml
+          echo '    repoURL: https://github.com/${{ github.repository }}.git' >> argocd-app.yaml
+          echo '    targetRevision: main' >> argocd-app.yaml
+          echo '    path: kubernetes' >> argocd-app.yaml
+          echo '  destination:' >> argocd-app.yaml
+          echo '    server: https://kubernetes.default.svc' >> argocd-app.yaml
+          echo '    namespace: production' >> argocd-app.yaml
+          echo '  syncPolicy:' >> argocd-app.yaml
+          echo '    automated:' >> argocd-app.yaml
+          echo '      prune: true' >> argocd-app.yaml
+          echo '      selfHeal: true' >> argocd-app.yaml
+          echo '    syncOptions:' >> argocd-app.yaml
+          echo '    - CreateNamespace=true' >> argocd-app.yaml
           
           # Apply the manifest
           kubectl apply -f argocd-app.yaml
