@@ -1,0 +1,13 @@
+name: "Flask DevSecOps Security Scan"
+
+queries:
+  - uses: security-extended  # Less noisy than security-and-quality
+
+paths:
+  - app/
+
+paths-ignore:
+  - '**/test'
+  - '**/tests'
+  - '**/__pycache__'
+  - '**/*.pyc'
