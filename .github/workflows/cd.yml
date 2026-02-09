@@ -5,7 +5,6 @@ on:
     branches: [main]
     tags: ['v*.*.*']
 
-# Add environment variables
 env:
   IMAGE_REGISTRY: ghcr.io
   IMAGE_NAME: flask-devsecops-ci
@@ -98,7 +97,7 @@ jobs:
     
     - name: 🔏 Sign Image with Cosign
       uses: sigstore/cosign-installer@main
-      continue-on-error: true  # Allow to fail if keys not configured
+      continue-on-error: true
       with:
         cosign-release: 'v2.0.0'
     
@@ -245,7 +244,7 @@ jobs:
         # Create ArgoCD Application if it doesn't exist
         if ! kubectl get application flask-devsecops-app -n argocd 2>/dev/null; then
           echo "📄 Creating ArgoCD Application..."
-          cat <<EOF | kubectl apply -f -
+          cat > /tmp/argocd-app.yaml << 'ARGOEOF'
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -266,7 +265,9 @@ spec:
       selfHeal: true
     syncOptions:
     - CreateNamespace=true
-EOF
+ARGOEOF
+          kubectl apply -f /tmp/argocd-app.yaml
+          rm /tmp/argocd-app.yaml
         else
           echo "✅ ArgoCD Application already exists"
         fi
@@ -302,3 +303,4 @@ EOF
         else
           echo "Status: ⚠️ KUBE_CONFIG secret not configured"
           echo "Note: Set KUBE_CONFIG secret in repository settings"
+        fi
