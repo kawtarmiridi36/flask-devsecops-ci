@@ -96,8 +96,8 @@ jobs:
         file: ${{ env.DOCKERFILE_PATH }}
         push: true
         tags: |
-          ${{ env.IMAGE_REGISTRY }}/${{ github.repository_owner }}/$IMAGE_NAME:latest
-          ${{ env.IMAGE_REGISTRY }}/${{ github.repository_owner }}/$IMAGE_NAME:${{ github.sha }}
+          ${{ env.IMAGE_REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:latest
+          ${{ env.IMAGE_REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
         labels: |
           org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
           org.opencontainers.image.revision=${{ github.sha }}
@@ -241,7 +241,7 @@ jobs:
           echo 'spec:' >> argocd-app.yaml
           echo '  project: default' >> argocd-app.yaml
           echo '  source:' >> argocd-app.yaml
-          echo '    repoURL: https://github.com/${{ github.repository }}.git' >> argocd-app.yaml
+          echo "    repoURL: https://github.com/${{ github.repository }}.git" >> argocd-app.yaml
           echo '    targetRevision: main' >> argocd-app.yaml
           echo '    path: kubernetes' >> argocd-app.yaml
           echo '  destination:' >> argocd-app.yaml
