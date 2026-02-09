@@ -1,288 +1,64 @@
-name: 🚀 Secure CD Pipeline
-
-on:
-  push:
-    branches: [main]
-    tags: ['v*.*.*']
-
-env:
-  IMAGE_REGISTRY: ghcr.io
-  IMAGE_NAME: flask-devsecops-ci
-  DOCKERFILE_PATH: ./app/Flask_app/Dockerfile
-
-permissions:
-  contents: read
-  packages: write
-  security-events: write
-
-jobs:
-  security-preflight:
-    name: 🛡️ Security Preflight Check
-    runs-on: ubuntu-latest
-    
-    steps:
-    - name: 📥 Checkout code
-      uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
-    
-    - name: 🔍 Trivy Filesystem Scan
-      uses: aquasecurity/trivy-action@master
-      with:
-        scan-type: 'fs'
-        scan-ref: '.'
-        format: 'sarif'
-        output: 'trivy-fs-results.sarif'
-        severity: 'CRITICAL,HIGH'
-    
-    - name: 📊 Security Report Summary
-      run: |
-        echo "🔒 Security Preflight Checks"
-        echo "============================"
-        echo "✓ Code checked for vulnerabilities"
-        echo "✓ Ready for build phase"
-
-  build-scan-push:
-    name: 🔨 Build, Scan & Push
-    runs-on: ubuntu-latest
-    needs: security-preflight
-    
-    outputs:
-      image-digest: ${{ steps.push.outputs.digest }}
-    
-    steps:
-    - name: 📥 Checkout code
-      uses: actions/checkout@v4
-    
-    - name: 🔧 Set up QEMU
-      uses: docker/setup-qemu-action@v3
-    
-    - name: 🐳 Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
-    
-    - name: 🔐 Login to GitHub Container Registry
-      uses: docker/login-action@v3
-      with:
-        registry: ${{ env.IMAGE_REGISTRY }}
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
-    
-    - name: 🏗️ Build Docker Image
-      uses: docker/build-push-action@v5
-      id: build
-      with:
-        context: ./app/Flask_app
-        file: ${{ env.DOCKERFILE_PATH }}
-        push: false
-        tags: |
-          ${{ env.IMAGE_REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:latest
-          ${{ env.IMAGE_REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
-        cache-from: type=gha
-        cache-to: type=gha,mode=max
-    
-    - name: 🔍 Scan Image with Trivy
-      uses: aquasecurity/trivy-action@master
-      with:
-        image-ref: '${{ env.IMAGE_REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:latest'
-        format: 'sarif'
-        output: 'trivy-image-results.sarif'
-        severity: 'CRITICAL,HIGH'
-    
-    - name: 📦 Push Image to Registry
-      uses: docker/build-push-action@v5
-      id: push
-      with:
-        context: ./app/Flask_app
-        file: ${{ env.DOCKERFILE_PATH }}
-        push: true
-        tags: |
-          ${{ env.IMAGE_REGISTRY }}/${{ github.repository_owner }}/$IMAGE_NAME:latest
-          ${{ env.IMAGE_REGISTRY }}/${{ github.repository_owner }}/$IMAGE_NAME:${{ github.sha }}
-        labels: |
-          org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-          org.opencontainers.image.revision=${{ github.sha }}
-    
-    - name: 📊 Build Summary
-      run: |
-        echo "✅ BUILD COMPLETE"
-        echo "================="
-        echo "Image: ${{ env.IMAGE_REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}"
-        echo "Tag: ${{ github.sha }}"
-        echo "Digest: ${{ steps.push.outputs.digest }}"
-
-  iac-security-scan:
-    name: 🏗️ IaC Security Scan
-    runs-on: ubuntu-latest
-    needs: [security-preflight, build-scan-push]
-    
-    steps:
-    - name: 📥 Checkout code
-      uses: actions/checkout@v4
-    
-    - name: 🔧 Install envsubst
-      run: sudo apt-get update && sudo apt-get install -y gettext
-    
-    - name: 🖼️ Create Templated Manifest with Digest
-      run: |
-        # Create templated version with actual digest
-        export IMAGE_WITH_DIGEST="$IMAGE_REGISTRY/${{ github.repository_owner }}/$IMAGE_NAME@${{ needs.build-scan-push.outputs.image-digest }}"
-        
-        # Create temporary directory
-        mkdir -p .checkov-tmp/kubernetes
-        
-        # Process template with envsubst
-        envsubst '$IMAGE_REGISTRY ${{ github.repository_owner }} $IMAGE_NAME' < kubernetes/deployment.yaml > .checkov-tmp/kubernetes/deployment.yaml.tmp
-        
-        # Replace PLACEHOLDER with actual digest
-        sed "s|:PLACEHOLDER|@${{ needs.build-scan-push.outputs.image-digest }}|" .checkov-tmp/kubernetes/deployment.yaml.tmp > .checkov-tmp/kubernetes/deployment.yaml
-        
-        echo "✅ Updated deployment with digest:"
-        grep 'image:' .checkov-tmp/kubernetes/deployment.yaml
-        
-        # Copy other files
-        cp kubernetes/*.yaml .checkov-tmp/kubernetes/ 2>/dev/null || true
-        rm .checkov-tmp/kubernetes/deployment.yaml.tmp
-    
-    - name: 🛡️ Checkov for IaC (Scan UPDATED files)
-      uses: bridgecrewio/checkov-action@v12
-      with:
-        directory: .checkov-tmp/
-        quiet: true
-        framework: kubernetes
-    
-    - name: 🧪 Verify Security Compliance
-      run: |
-        echo "🔍 Security Verification:"
-        echo ""
-        echo "1. Image uses digest:"
-        if grep -q "@sha256:" .checkov-tmp/kubernetes/deployment.yaml; then
-          echo "   ✅ PASS - Image uses SHA256 digest (CKV_K8S_43)"
-          grep 'image:' .checkov-tmp/kubernetes/deployment.yaml
-        else
-          echo "   ❌ FAIL - Image missing digest"
-        fi
-        
-        echo ""
-        echo "2. No 'latest' tag:"
-        if ! grep -q ":latest" .checkov-tmp/kubernetes/deployment.yaml; then
-          echo "   ✅ PASS - No 'latest' tag (CKV_K8S_14)"
-        else
-          echo "   ❌ FAIL - Uses 'latest' tag"
-        fi
-
-  deploy:
-    name: ☸️ GitOps Deployment with ArgoCD
-    runs-on: ubuntu-latest
-    needs: [build-scan-push, iac-security-scan]
-    if: github.ref == 'refs/heads/main'
-    
-    environment: production
-    permissions:
-      contents: read
-      packages: write
-      deployments: write
-    
-    steps:
-    - name: 📥 Checkout code
-      uses: actions/checkout@v4
-    
-    - name: 🔐 Configure Kubernetes
-      id: kubeconfig
-      run: |
-        if [ -n "${{ secrets.KUBE_CONFIG }}" ]; then
-          echo "🔐 KUBE_CONFIG secret found"
-          mkdir -p ~/.kube
-          echo "${{ secrets.KUBE_CONFIG }}" | base64 -d > ~/.kube/config 2>/dev/null || \
-          echo "${{ secrets.KUBE_CONFIG }}" > ~/.kube/config
-          kubectl config current-context
-          kubectl cluster-info
-          echo "✅ Kubernetes configured"
-          echo "configured=true" >> $GITHUB_OUTPUT
-        else
-          echo "⚠️ KUBE_CONFIG secret not configured"
-          echo "configured=false" >> $GITHUB_OUTPUT
-        fi
-    
-    - name: 🖼️ Update Deployment with Actual Image Digest
-      if: steps.kubeconfig.outputs.configured == 'true'
-      run: |
-        # Export variables
-        export IMAGE_WITH_DIGEST="$IMAGE_REGISTRY/${{ github.repository_owner }}/$IMAGE_NAME@${{ needs.build-scan-push.outputs.image-digest }}"
-        
-        echo "📦 Image Digest: $IMAGE_WITH_DIGEST"
-        
-        # Create updated deployment file
-        envsubst '$IMAGE_REGISTRY ${{ github.repository_owner }} $IMAGE_NAME' < kubernetes/deployment.yaml > kubernetes/deployment.updated.yaml
-        sed -i "s|:PLACEHOLDER|@${{ needs.build-scan-push.outputs.image-digest }}|" kubernetes/deployment.updated.yaml
-        
-        # Replace the original deployment.yaml with updated one
-        cp kubernetes/deployment.updated.yaml kubernetes/deployment.yaml
-        
-        echo "✅ Deployment manifest updated with actual digest"
-        grep 'image:' kubernetes/deployment.yaml
-    
-    - name: 🚀 Create ArgoCD Application (Simplified)
+    - name: 🚀 Create ArgoCD Application
       if: steps.kubeconfig.outputs.configured == 'true'
       run: |
         echo "📄 Creating/Updating ArgoCD Application..."
         
-        # Create ArgoCD Application using echo and kubectl apply
-        kubectl apply -f - <<EOS
-apiVersion: argoproj.io/v1alpha1
-kind: Application
-metadata:
-  name: flask-devsecops-app
-  namespace: argocd
-spec:
-  project: default
-  source:
-    repoURL: https://github.com/${{ github.repository }}.git
-    targetRevision: main
-    path: kubernetes
-  destination:
-    server: https://kubernetes.default.svc
-    namespace: production
-  syncPolicy:
-    automated:
-      prune: true
-      selfHeal: true
-    syncOptions:
-    - CreateNamespace=true
-EOS
+        # Check if application already exists
+        if kubectl get application flask-devsecops-app -n argocd 2>/dev/null; then
+          echo "✅ ArgoCD Application already exists"
+        else
+          # Create ArgoCD Application manifest
+          echo "apiVersion: argoproj.io/v1alpha1" > argocd-app.yaml
+          echo "kind: Application" >> argocd-app.yaml
+          echo "metadata:" >> argocd-app.yaml
+          echo "  name: flask-devsecops-app" >> argocd-app.yaml
+          echo "  namespace: argocd" >> argocd-app.yaml
+          echo "spec:" >> argocd-app.yaml
+          echo "  project: default" >> argocd-app.yaml
+          echo "  source:" >> argocd-app.yaml
+          echo "    repoURL: https://github.com/${{ github.repository }}.git" >> argocd-app.yaml
+          echo "    targetRevision: main" >> argocd-app.yaml
+          echo "    path: kubernetes" >> argocd-app.yaml
+          echo "  destination:" >> argocd-app.yaml
+          echo "    server: https://kubernetes.default.svc" >> argocd-app.yaml
+          echo "    namespace: production" >> argocd-app.yaml
+          echo "  syncPolicy:" >> argocd-app.yaml
+          echo "    automated:" >> argocd-app.yaml
+          echo "      prune: true" >> argocd-app.yaml
+          echo "      selfHeal: true" >> argocd-app.yaml
+          echo "    syncOptions:" >> argocd-app.yaml
+          echo "    - CreateNamespace=true" >> argocd-app.yaml
+          
+          # Apply the manifest
+          kubectl apply -f argocd-app.yaml
+          rm argocd-app.yaml
+          echo "✅ ArgoCD Application created"
+        fi
     
     - name: 🔄 Sync ArgoCD Application
       if: steps.kubeconfig.outputs.configured == 'true'
       run: |
         echo "🔄 Triggering ArgoCD sync..."
         
-        # Trigger refresh and sync
+        # Trigger refresh
         kubectl patch application flask-devsecops-app -n argocd \
           --type merge \
           -p '{"metadata": {"annotations": {"argocd.argoproj.io/refresh": "hard"}}}'
         
-        # Wait for sync to complete
-        echo "⏳ Waiting for sync completion..."
-        timeout=300
-        interval=10
-        elapsed=0
-        
-        while [ $elapsed -lt $timeout ]; do
+        # Wait for sync
+        echo "⏳ Waiting for sync (max 5 minutes)..."
+        for i in {1..30}; do
           status=$(kubectl get application flask-devsecops-app -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "Unknown")
           health=$(kubectl get application flask-devsecops-app -n argocd -o jsonpath='{.status.health.status}' 2>/dev/null || echo "Unknown")
           
           if [ "$status" = "Synced" ] && [ "$health" = "Healthy" ]; then
-            echo "✅ ArgoCD sync completed successfully"
+            echo "✅ ArgoCD sync successful: Status=$status, Health=$health"
             break
           fi
           
-          echo "  Status: $status, Health: $health (waiting...)"
-          sleep $interval
-          elapsed=$((elapsed + interval))
+          echo "  [$i/30] Status: $status, Health: $health"
+          sleep 10
         done
-        
-        if [ $elapsed -ge $timeout ]; then
-          echo "⚠️  Sync timeout reached, continuing..."
-        fi
     
     - name: 📊 Deployment Summary
       if: always()
@@ -290,18 +66,14 @@ EOS
         echo "🎯 DEPLOYMENT SUMMARY"
         echo "===================="
         if [ "${{ steps.kubeconfig.outputs.configured }}" = "true" ]; then
-          echo "Status: ✅ GitOps deployment via ArgoCD"
-          echo "Method: GitOps (ArgoCD)"
-          echo "Application: flask-devsecops-app"
-          echo "Namespace: production"
+          echo "✅ GitOps deployment via ArgoCD"
+          echo "📊 Application: flask-devsecops-app"
+          echo "📁 Namespace: production"
           echo ""
-          echo "📈 ArgoCD Status:"
-          kubectl get application flask-devsecops-app -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "Not available"
-          echo ""
-          echo "🔗 Access ArgoCD UI:"
+          echo "🔗 Access ArgoCD:"
           echo "kubectl port-forward svc/argocd-server -n argocd 8080:443"
-          echo "URL: https://localhost:8080 (admin / password from argocd-secret)"
         else
-          echo "Status: ⚠️ KUBE_CONFIG secret not configured"
-          echo "Note: Set KUBE_CONFIG secret in GitHub repository settings → Secrets → Actions"
+          echo "⚠️ KUBE_CONFIG secret not configured"
+          echo "Add KUBE_CONFIG secret in GitHub Settings → Secrets → Actions"
         fi
+
