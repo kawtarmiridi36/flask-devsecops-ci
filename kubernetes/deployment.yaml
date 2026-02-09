@@ -16,7 +16,7 @@ spec:
     spec:
       containers:
       - name: test
-        image: flask-devsecops-ci:latest
+        image: $IMAGE_REGISTRY/$IMAGE_NAME:PLACEHOLDER
         imagePullPolicy: Never
         command: ["sh", "-c"]
         args:
