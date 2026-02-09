@@ -48,6 +48,7 @@ jobs:
     permissions:
       contents: read
       security-events: write
+      actions: read  # ADDED: Fixes the telemetry error
 
     steps:
       - name: Checkout code
@@ -78,6 +79,8 @@ jobs:
       - name: Perform CodeQL Analysis
         if: ${{ github.event_name == 'push' }}
         uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:python"  # ADDED: Optional but good practice
 
   dependency-check:
     name: Analyse Dépendances
