@@ -1,79 +1,31 @@
+# test-deployment.yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: flask-devsecops
+  name: flask-test
   namespace: production
-  labels:
-    app: flask-devsecops
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
-      app: flask-devsecops
+      app: flask-test
   template:
     metadata:
       labels:
-        app: flask-devsecops
+        app: flask-test
     spec:
-      automountServiceAccountToken: false
-      securityContext:
-        runAsNonRoot: true
-        runAsUser: 10001
-        runAsGroup: 10001
-        fsGroup: 10001
       containers:
-      - name: flask-app
+      - name: test
         image: flask-devsecops-ci:latest
-        imagePullPolicy: IfNotPresent
-
-        securityContext:
-          allowPrivilegeEscalation: false
-          capabilities:
-            drop:
-            - ALL
-          runAsNonRoot: true
-          runAsUser: 10001
-          runAsGroup: 10001
-          privileged: false
-
+        imagePullPolicy: Never
+        command: ["sh", "-c"]
+        args:
+          - |
+            echo "Testing if image works..."
+            which gunicorn && echo "Gunicorn found"
+            pip list | grep gunicorn
+            python -c "from run import app; print('App import successful')"
+            echo "Starting gunicorn..."
+            exec gunicorn --bind 0.0.0.0:5000 run:app --workers 2 --timeout 120 --access-logfile -
         ports:
         - containerPort: 5000
-          name: http
-
-        env:
-        - name: FLASK_ENV
-          value: "production"
-
-        resources:
-          requests:
-            cpu: 250m
-            memory: 256Mi
-          limits:
-            cpu: 500m
-            memory: 512Mi
-
-        livenessProbe:
-          httpGet:
-            path: /health
-            port: 5000
-          initialDelaySeconds: 60
-          periodSeconds: 10
-          failureThreshold: 5
-
-        readinessProbe:
-          httpGet:
-            path: /health
-            port: 5000
-          initialDelaySeconds: 10
-          periodSeconds: 5
-          failureThreshold: 3
-
-        volumeMounts:
-        - name: tmp
-          mountPath: /tmp
-
-      volumes:
-      - name: tmp
-        emptyDir:
-          medium: Memory
-
