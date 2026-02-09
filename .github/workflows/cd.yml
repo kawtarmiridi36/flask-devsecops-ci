@@ -302,4 +302,3 @@ EOF
         else
           echo "Status: ⚠️ KUBE_CONFIG secret not configured"
           echo "Note: Set KUBE_CONFIG secret in repository settings"
-        fi
