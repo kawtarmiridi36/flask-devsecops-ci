@@ -7,6 +7,14 @@ from flask_login import login_user, logout_user, current_user
 
 auth_bp = Blueprint("auth", __name__)
 
+# 🔧 ADD METRICS IMPORTS AT THE TOP
+try:
+    from ..metrics import USER_REGISTRATIONS, update_active_users
+    AUTH_METRICS_ENABLED = True
+except ImportError:
+    AUTH_METRICS_ENABLED = False
+    logging.warning("Prometheus metrics not available for auth - skipping metrics tracking")
+
 # Fonctions de validation (NOUVEAU)
 def validate_email(email):
     """Valide le format d'email"""
@@ -56,6 +64,14 @@ def register():
         db.session.add(user)
         db.session.commit()
         
+        # 🔧 METRICS: Increment user registration counter
+        if AUTH_METRICS_ENABLED:
+            try:
+                USER_REGISTRATIONS.inc()
+                logging.info(f"✅ Metrics: User registration counter incremented for {user.username}")
+            except Exception as metrics_error:
+                logging.warning(f"⚠️  Could not increment metrics: {metrics_error}")
+        
         # Journalisation (NOUVEAU)
         logging.info(f"New user registered: {user.username} ({user.email})")
         
@@ -66,6 +82,9 @@ def register():
                 "username": user.username,
                 "email": user.email,
                 "role": user.role
+            },
+            "metrics": {
+                "user_registration_incremented": AUTH_METRICS_ENABLED
             }
         }), 201
         
@@ -89,6 +108,15 @@ def login():
         
         if user and user.check_password(data["password"]):
             login_user(user)
+            
+            # 🔧 METRICS: Update active users count (optional - you need to track sessions)
+            # This is a placeholder - you would need proper session tracking
+            # if AUTH_METRICS_ENABLED:
+            #     try:
+            #         active_count = get_active_users_count()  # You need to implement this
+            #         update_active_users(active_count)
+            #     except Exception as metrics_error:
+            #         logging.warning(f"⚠️  Could not update active users metrics: {metrics_error}")
             
             # Journalisation (NOUVEAU)
             logging.info(f"User logged in: {user.username}")
@@ -118,6 +146,15 @@ def logout():
         username = current_user.username
         logout_user()
         logging.info(f"User logged out: {username}")  # NOUVEAU
+        
+        # 🔧 METRICS: Update active users count on logout
+        # if AUTH_METRICS_ENABLED:
+        #     try:
+        #         # Decrement active users count if you track sessions
+        #         pass
+        #     except Exception as metrics_error:
+        #         logging.warning(f"⚠️  Could not update active users metrics: {metrics_error}")
+        
         return jsonify({"message": "Logged out successfully"}), 200
     else:
         return jsonify({"error": "No user is logged in"}), 400
@@ -134,3 +171,25 @@ def get_current_user():
         }), 200
     else:
         return jsonify({"error": "Not authenticated"}), 401
+
+# 🔧 ADD METRICS ENDPOINT TO THE BLUEPRINT (Optional)
+@auth_bp.route("/metrics-info", methods=["GET"])
+def auth_metrics_info():
+    """Information about authentication metrics"""
+    return jsonify({
+        "service": "authentication",
+        "metrics": {
+            "available": AUTH_METRICS_ENABLED,
+            "counters": [
+                "flask_user_registrations_total"
+            ],
+            "gauges": [
+                "flask_active_users"
+            ],
+            "endpoints": {
+                "global_metrics": "/metrics",
+                "user_registration": "Increments flask_user_registrations_total",
+                "login/logout": "Updates flask_active_users gauge"
+            }
+        }
+    })

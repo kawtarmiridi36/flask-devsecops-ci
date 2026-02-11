@@ -1,0 +1,18 @@
+promtail:
+  enabled: true
+  securityContext:
+    privileged: false
+  extraVolumes:
+    - name: docker-sock
+      hostPath:
+        path: /var/run/docker.sock
+    - name: containers
+      hostPath:
+        path: /var/lib/docker/containers
+  extraVolumeMounts:
+    - name: docker-sock
+      mountPath: /var/run/docker.sock
+      readOnly: true
+    - name: containers
+      mountPath: /var/lib/docker/containers
+      readOnly: true

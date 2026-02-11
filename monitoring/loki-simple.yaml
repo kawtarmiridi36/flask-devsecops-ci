@@ -1,0 +1,30 @@
+# Simple single binary mode
+loki:
+  auth_enabled: false
+  commonConfig:
+    replication_factor: 1
+  storage:
+    type: 'filesystem'
+
+# Use single binary mode only (not mixed mode)
+singleBinary:
+  enabled: true
+  replicas: 1
+  persistence:
+    enabled: false
+
+# Disable other modes
+read:
+  enabled: false
+write:
+  enabled: false
+backend:
+  enabled: false
+gateway:
+  enabled: false
+
+# Disable other components
+promtail:
+  enabled: false
+grafana:
+  enabled: false

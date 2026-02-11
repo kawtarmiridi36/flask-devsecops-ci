@@ -1,4 +1,4 @@
-# test-deployment.yaml
+k# kubernetes/deployment.yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -13,6 +13,12 @@ spec:
     metadata:
       labels:
         app: flask-test
+      # 🔧 ADD PROMETHEUS ANNOTATIONS HERE
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "5000"
+        prometheus.io/path: "/metrics"
+        prometheus.io/scheme: "http"
     spec:
       containers:
       - name: test
@@ -29,3 +35,16 @@ spec:
             exec gunicorn --bind 0.0.0.0:5000 run:app --workers 2 --timeout 120 --access-logfile -
         ports:
         - containerPort: 5000
+        # 🔧 OPTIONAL: Add readiness/liveness probes for metrics
+        readinessProbe:
+          httpGet:
+            path: /metrics
+            port: 5000
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 5000
+          initialDelaySeconds: 30
+          periodSeconds: 10

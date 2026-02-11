@@ -1,0 +1,47 @@
+{
+  "title": "Flask App Logs Dashboard",
+  "tags": ["flask", "logs", "loki"],
+  "timezone": "browser",
+  "panels": [
+    {
+      "title": "Flask Application Logs",
+      "type": "logs",
+      "gridPos": {"h": 16, "w": 24, "x": 0, "y": 0},
+      "targets": [{
+        "expr": "{app=\"flask-devsecops\"} |= ``",
+        "refId": "A",
+        "queryType": "range",
+        "maxLines": 100
+      }],
+      "options": {
+        "showTime": true,
+        "wrapLogMessage": true,
+        "showLabels": true,
+        "showCommonLabels": false,
+        "prettifyLogMessage": false,
+        "enableLogDetails": true,
+        "dedupStrategy": "none"
+      }
+    },
+    {
+      "title": "Log Levels Distribution",
+      "type": "stat",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+      "targets": [{
+        "expr": "count_over_time({app=\"flask-devsecops\"} | logfmt | level [5m])",
+        "legendFormat": "Total logs",
+        "refId": "A"
+      }]
+    },
+    {
+      "title": "Error Logs",
+      "type": "logs",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+      "targets": [{
+        "expr": "{app=\"flask-devsecops\"} |= \"ERROR\"",
+        "refId": "A",
+        "queryType": "range"
+      }]
+    }
+  ]
+}

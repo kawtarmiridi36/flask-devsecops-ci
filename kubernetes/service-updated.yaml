@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: flask-devsecops
+  namespace: production
+  labels:
+    app: flask-devsecops
+spec:
+  selector:
+    app: flask-devsecops
+  ports:
+  - name: metrics  # Add a name for the port
+    port: 80
+    targetPort: 5000
+    protocol: TCP

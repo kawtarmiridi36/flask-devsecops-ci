@@ -19,26 +19,24 @@ def create_app():
     app = Flask(__name__, template_folder=template_dir)
     app.config.from_object(Config)
 
+    # ⚡ IMPORTANT: Setup Prometheus metrics FIRST (before blueprints)
+    try:
+        from .metrics import setup_metrics
+        app = setup_metrics(app)
+        print("✅ Prometheus metrics enabled")
+        app.logger.info("Prometheus metrics enabled")
+    except ImportError as e:
+        error_msg = f"⚠️  Prometheus metrics not available: {e}"
+        print(error_msg)
+        app.logger.warning(error_msg)
+
     # Blueprint health (IMPORTANT : après création de app)
     from .health import health_bp
     app.register_blueprint(health_bp)
 
-    # Configuration de la journalisation
-    if not app.debug and not app.testing:
-        if not os.path.exists('logs'):
-            os.mkdir('logs')
-        file_handler = RotatingFileHandler(
-            'logs/app.log', maxBytes=10240, backupCount=10
-        )
-        file_handler.setFormatter(logging.Formatter(
-            '%(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]'
-        ))
-        file_handler.setLevel(logging.INFO)
-        app.logger.addHandler(file_handler)
-        app.logger.setLevel(logging.INFO)
-        app.logger.info("🚀 Démarrage de l'application Flask")
-
-    print("🚀 Initialisation de l'application Flask...")
+    # Setup logging for Kubernetes/Loki (stdout only)
+    from .logging_fix import setup_app_logging
+    app = setup_app_logging(app)
 
     # Initialisation des extensions
     db.init_app(app)
@@ -67,6 +65,10 @@ def create_app():
 
         print("✅ Blueprints principaux enregistrés")
         app.logger.info("Blueprints enregistrés: auth, annonces, comments, members")
+
+        # 🔧 MODIFICATION: Inject metrics increment functions into blueprints
+        # We'll add metrics increments to routes (examples below)
+        # This should be done in the actual route files, but here's the pattern
 
     except Exception as e:
         error_msg = f"Erreur blueprints: {e}"
@@ -117,6 +119,7 @@ def create_app():
                 <li><a href="/health">/health</a> - ✅ Fonctionne</li>
                 <li><a href="/dev">/dev</a> - Interface développeur</li>
                 <li><a href="/auth/login">/auth/login</a> - Connexion</li>
+                <li><a href="/metrics">/metrics</a> - Métriques Prometheus</li>
             </ul>
             """
 
@@ -129,7 +132,8 @@ def create_app():
             "features": {
                 "logging": "active",
                 "csrf": "active (API exemptées)",
-                "database": "connected"
+                "database": "connected",
+                "metrics": "active - /metrics endpoint available"
             }
         })
 
@@ -159,7 +163,33 @@ def create_app():
     def annonces_page():
         return render_template('annonces.html')
 
-    print("🎯 Application prête!")
-    app.logger.info("Application Flask initialisée avec succès")
+    # 🔧 NOUVELLE ROUTE: Metrics endpoint for Prometheus
+    # Note: This route is actually handled by the setup_metrics function,
+    # but we add a reference here for clarity
+    
+    @app.route('/metrics-info')
+    def metrics_info():
+        """Info page about metrics endpoint"""
+        return jsonify({
+            "metrics_endpoint": "/metrics",
+            "available_metrics": [
+                "flask_http_request_total",
+                "flask_http_request_duration_seconds",
+                "flask_active_users",
+                "flask_health_status",
+                "flask_db_connections",
+                "flask_http_errors_total",
+                "flask_announcements_total",
+                "flask_user_registrations_total",
+                "flask_comments_total"
+            ],
+            "monitoring": {
+                "prometheus_scrape_path": "/metrics",
+                "prometheus_scrape_interval": "30s"
+            }
+        })
+
+    print("🎯 Application prête! Métriques disponibles sur /metrics")
+    app.logger.info("Application Flask initialisée avec succès, métriques Prometheus activées")
 
     return app

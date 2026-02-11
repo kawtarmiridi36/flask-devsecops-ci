@@ -7,6 +7,14 @@ from ..models import Commentaire, Annonce
 
 comments_bp = Blueprint("comments", __name__)
 
+# 🔧 ADD METRICS IMPORTS AT THE TOP
+try:
+    from ..metrics import COMMENT_COUNT
+    COMMENTS_METRICS_ENABLED = True
+except ImportError:
+    COMMENTS_METRICS_ENABLED = False
+    logging.warning("Prometheus metrics not available for comments - skipping metrics tracking")
+
 @comments_bp.route("/", methods=["POST"])
 @login_required
 def add_comment():
@@ -39,6 +47,14 @@ def add_comment():
         db.session.add(comment)
         db.session.commit()
         
+        # 🔧 METRICS: Increment comment counter
+        if COMMENTS_METRICS_ENABLED:
+            try:
+                COMMENT_COUNT.inc()
+                logging.info(f"✅ Metrics: Comment counter incremented by {current_user.username}")
+            except Exception as metrics_error:
+                logging.warning(f"⚠️  Could not increment metrics: {metrics_error}")
+        
         # Journalisation
         logging.info(f"Comment added by {current_user.username} on annonce {annonce.id}")
         
@@ -51,6 +67,9 @@ def add_comment():
                 "user_id": comment.user_id,
                 "annonce_id": comment.annonce_id,
                 "auteur": comment.auteur.username if comment.auteur else "Unknown"
+            },
+            "metrics": {
+                "comment_count_incremented": COMMENTS_METRICS_ENABLED
             }
         }), 201
         
@@ -148,6 +167,9 @@ def delete_comment(comment_id):
         db.session.delete(comment)
         db.session.commit()
         
+        # 🔧 METRICS: You could add a metric for deleted comments if needed
+        # Example: if COMMENTS_METRICS_ENABLED: COMMENT_DELETED_COUNT.inc()
+        
         # Journalisation
         logging.info(f"Comment by {auteur} on annonce {annonce_id} deleted by {current_user.username}. Content: '{contenu_preview}'")
         
@@ -232,3 +254,21 @@ def get_pending_comments():
     except Exception as e:
         logging.error(f"Error getting pending comments: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500
+
+# 🔧 ADD METRICS ENDPOINT TO THE BLUEPRINT (Optional)
+@comments_bp.route("/metrics-info", methods=["GET"])
+def comments_metrics_info():
+    """Information about comments metrics"""
+    return jsonify({
+        "service": "comments",
+        "metrics": {
+            "available": COMMENTS_METRICS_ENABLED,
+            "counters": [
+                "flask_comments_total"
+            ],
+            "endpoints": {
+                "global_metrics": "/metrics",
+                "add_comment": "Increments flask_comments_total"
+            }
+        }
+    })

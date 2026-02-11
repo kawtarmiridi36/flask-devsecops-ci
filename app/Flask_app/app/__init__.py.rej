@@ -1,0 +1,7 @@
+--- __init__.py.backup
++++ __init__.py
+@@ -207,4 +194,4 @@
+     print("🎯 Application prête! Métriques disponibles sur /metrics")
+     app.logger.info("Application Flask initialisée avec succès, métriques Prometheus activées")
+ 
+-    return app+    return app

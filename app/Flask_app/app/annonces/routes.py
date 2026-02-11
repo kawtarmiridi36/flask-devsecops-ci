@@ -7,6 +7,14 @@ from ..models import Annonce, Commentaire
 
 annonces_bp = Blueprint("annonces", __name__)
 
+# 🔧 ADD METRICS IMPORTS AT THE TOP
+try:
+    from ..metrics import ANNOUNCEMENT_COUNT
+    METRICS_ENABLED = True
+except ImportError:
+    METRICS_ENABLED = False
+    logging.warning("Prometheus metrics not available - skipping metrics tracking")
+
 @annonces_bp.route("/", methods=["POST"])
 @login_required
 def create_annonce():
@@ -35,6 +43,14 @@ def create_annonce():
         db.session.add(annonce)
         db.session.commit()
         
+        # 🔧 METRICS: Increment announcement counter
+        if METRICS_ENABLED:
+            try:
+                ANNOUNCEMENT_COUNT.inc()
+                logging.info(f"✅ Metrics: Annonce counter incremented for new announcement by {current_user.username}")
+            except Exception as metrics_error:
+                logging.warning(f"⚠️  Could not increment metrics: {metrics_error}")
+        
         # Journalisation
         logging.info(f"Annonce created by {current_user.username}: {annonce.titre}")
         
@@ -46,6 +62,9 @@ def create_annonce():
                 "contenu": annonce.contenu,
                 "date": annonce.date.isoformat(),
                 "user_id": annonce.user_id
+            },
+            "metrics": {
+                "announcement_count_incremented": METRICS_ENABLED
             }
         }), 201
         
@@ -79,6 +98,9 @@ def list_annonces():
                     "auteur": c.auteur.username if c.auteur else "Unknown"  # NOUVEAU
                 } for c in commentaires]
             })
+        
+        # 🔧 METRICS: Update active users gauge if we had that info
+        # You could add: update_active_users(len(result)) if tracking active content
         
         return jsonify(result), 200
         
@@ -184,6 +206,9 @@ def delete_annonce(annonce_id):
         db.session.delete(annonce)
         db.session.commit()
         
+        # 🔧 METRICS: You could add a metric for deletions if needed
+        # Example: if METRICS_ENABLED: ANNOUNCEMENT_DELETED_COUNT.inc()
+        
         # Journalisation
         logging.info(f"Annonce '{titre}' (ID: {annonce_id}) with {commentaires_count} comments deleted by {current_user.username}")
         
@@ -217,3 +242,21 @@ def get_user_annonces(user_id):
     except Exception as e:
         logging.error(f"Error getting annonces for user {user_id}: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500
+
+# 🔧 ADD METRICS ENDPOINT TO THE BLUEPRINT (Optional)
+@annonces_bp.route("/metrics-info", methods=["GET"])
+def annonces_metrics_info():
+    """Information about annonces metrics"""
+    return jsonify({
+        "service": "annonces",
+        "metrics": {
+            "available": METRICS_ENABLED,
+            "counters": [
+                "flask_announcements_total"
+            ],
+            "endpoints": {
+                "global_metrics": "/metrics",
+                "create_annonce": "Increments flask_announcements_total"
+            }
+        }
+    })

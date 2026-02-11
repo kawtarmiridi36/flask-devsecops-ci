@@ -3,7 +3,11 @@ from flask_login import login_required, current_user
 import logging
 from ..extensions import db
 from ..models import User
-
+try:
+    from ..metrics import update_active_users
+    MEMBERS_METRICS_ENABLED = True
+except ImportError:
+    MEMBERS_METRICS_ENABLED = False
 members_bp = Blueprint("members", __name__)
 
 @members_bp.route("/", methods=["GET"])
